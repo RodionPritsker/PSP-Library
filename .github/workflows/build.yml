@@ -33,7 +33,7 @@ jobs:
             -v "$GITHUB_WORKSPACE:/source" \
             -w /source \
             pspdev/pspdev:latest \
-            sh -lc 'rm -rf build && mkdir build && cd build && psp-cmake .. && make -j2 && test -s EBOOT.PBP'
+            sh -c 'rm -rf build && mkdir build && cd build && psp-cmake .. && make -j2 && test -s EBOOT.PBP'
 
       - name: Prepare PPSSPP installation ZIP
         run: |
