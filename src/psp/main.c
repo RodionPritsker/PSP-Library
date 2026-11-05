@@ -38,7 +38,6 @@ static int callback_setup(void)
 }
 
 static pspl_library_t g_library;
-static pspl_library_t g_demo;
 
 int main(void)
 {
@@ -62,13 +61,13 @@ int main(void)
     } else if (pspl_storage_exists(demo_path) && pspl_storage_load(demo_path, &g_library) == 0) {
         demo_mode = 1;
     } else {
-        pspl_demo_populate(&g_demo, pspl_library_now());
-        pspl_storage_save(demo_path, &g_demo);
-        g_library = g_demo;
+        pspl_demo_populate(&g_library, pspl_library_now());
+        pspl_storage_save(demo_path, &g_library);
         demo_mode = 1;
     }
 
     pspl_ui_run(&g_library, user_path, demo_mode);
+    pspl_library_free(&g_library);
     sceKernelExitGame();
     return 0;
 }

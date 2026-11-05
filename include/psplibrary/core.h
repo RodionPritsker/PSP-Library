@@ -4,8 +4,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define PSPL_MAX_GAMES 64
-#define PSPL_MAX_SESSIONS 256
+#define PSPL_INITIAL_GAME_CAPACITY 16
+#define PSPL_INITIAL_SESSION_CAPACITY 64
 #define PSPL_ID_LEN 17
 #define PSPL_TITLE_LEN 64
 #define PSPL_PLATFORM_LEN 16
@@ -53,10 +53,12 @@ typedef struct {
 } pspl_game_t;
 
 typedef struct {
-    pspl_game_t games[PSPL_MAX_GAMES];
+    pspl_game_t *games;
     size_t game_count;
-    pspl_session_t sessions[PSPL_MAX_SESSIONS];
+    size_t game_capacity;
+    pspl_session_t *sessions;
     size_t session_count;
+    size_t session_capacity;
     char active_game_id[PSPL_ID_LEN];
     uint32_t active_started_at;
 } pspl_library_t;
@@ -74,11 +76,13 @@ typedef enum {
 } pspl_sort_t;
 
 void pspl_library_init(pspl_library_t *library);
+void pspl_library_free(pspl_library_t *library);
 const char *pspl_platform_name(pspl_platform_t platform);
 pspl_platform_t pspl_platform_from_name(const char *name);
 int pspl_make_game_id(pspl_platform_t platform, const char *content_key,
                       char out_id[PSPL_ID_LEN]);
 int pspl_library_add_game(pspl_library_t *library, const pspl_game_t *game);
+int pspl_library_append_session(pspl_library_t *library, const pspl_session_t *session);
 pspl_game_t *pspl_library_find_game(pspl_library_t *library, const char *id);
 const pspl_game_t *pspl_library_find_game_const(const pspl_library_t *library,
                                                 const char *id);

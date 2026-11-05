@@ -4,6 +4,7 @@
 
 #include <assert.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 static void make_game(pspl_game_t *game, pspl_platform_t platform, const char *title, const char *key)
@@ -43,6 +44,7 @@ static void test_ids_and_sorting(void)
     assert(count == 3 && strcmp(library.games[indices[0]].title, "Bravo") == 0);
     count = pspl_library_filter_sort(&library, PSPL_PLATFORM_ALL, PSPL_SORT_LAST_PLAYED, indices, 4);
     assert(count == 3 && strcmp(library.games[indices[0]].title, "Alpha") == 0);
+    pspl_library_free(&library);
 }
 
 static void test_events(void)
@@ -83,6 +85,7 @@ static void test_events(void)
     assert(library.games[0].total_seconds == 170 && library.games[1].total_seconds == 40);
     assert(library.games[0].session_count == 3 && library.games[1].session_count == 1);
     assert(library.session_count == 4);
+    pspl_library_free(&library);
 }
 
 static void corrupt_first_byte(const char *path)
@@ -164,6 +167,8 @@ static void test_storage(void)
     pspl_library_t loaded;
     pspl_library_t recovered;
     pspl_game_t game;
+    pspl_library_init(&loaded);
+    pspl_library_init(&recovered);
     remove(path);
     remove("test_storage.db.bak");
     remove(partial_path);
@@ -223,6 +228,9 @@ static void test_storage(void)
     remove("test_storage.db.bak");
     remove(partial_path);
     remove(legacy_path);
+    pspl_library_free(&original);
+    pspl_library_free(&loaded);
+    pspl_library_free(&recovered);
 }
 
 static void test_psp_tracker_adapter(void)
@@ -302,6 +310,108 @@ static void test_psp_tracker_adapter(void)
     assert(library.games[1].total_seconds == 150 && library.games[1].session_count == 2);
 
     remove(source_path);
+    pspl_library_free(&library);
+}
+
+static void populate_scaled_library(pspl_library_t *library, size_t game_count,
+                                    size_t session_count)
+{
+    size_t i;
+    for (i = 0; i < game_count; ++i) {
+        pspl_game_t game;
+        char title[PSPL_TITLE_LEN];
+        char key[PSPL_CONTENT_KEY_LEN];
+        pspl_platform_t platform = (pspl_platform_t)(PSPL_PLATFORM_PSP + (i % 8));
+        snprintf(title, sizeof(title), "Stress Game %04lu", (unsigned long)i);
+        snprintf(key, sizeof(key), "STRESS-%04lu|US|1.0", (unsigned long)i);
+        make_game(&game, platform, title, key);
+        assert(pspl_library_add_game(library, &game) == 0);
+    }
+    for (i = 0; i < session_count; ++i) {
+        pspl_event_t event;
+        size_t game_index = i % game_count;
+        event.type = PSPL_EVENT_GAME_STARTED;
+        event.game_id = library->games[game_index].id;
+        event.timestamp = 1000U + (uint32_t)(i * 2U);
+        assert(pspl_library_handle_event(library, &event) == 0);
+        event.type = PSPL_EVENT_GAME_STOPPED;
+        event.timestamp += 1U;
+        assert(pspl_library_handle_event(library, &event) == 0);
+    }
+}
+
+static void test_stress_scaling(void)
+{
+    const size_t game_counts[] = { 100, 500, 1000 };
+    size_t scenario;
+    for (scenario = 0; scenario < sizeof(game_counts) / sizeof(game_counts[0]); ++scenario) {
+        char path[64];
+        pspl_library_t library;
+        pspl_library_t loaded;
+        pspl_library_t recovered;
+        size_t *indices;
+        size_t game_count = game_counts[scenario];
+        size_t session_count = game_count == 1000 ? 10000 : game_count * 3;
+        size_t i;
+        int count;
+
+        snprintf(path, sizeof(path), "test_stress_%lu.db", (unsigned long)game_count);
+        remove(path);
+        {
+            char backup[80];
+            char temporary[80];
+            snprintf(backup, sizeof(backup), "%s.bak", path);
+            snprintf(temporary, sizeof(temporary), "%s.tmp", path);
+            remove(backup);
+            remove(temporary);
+        }
+        pspl_library_init(&library);
+        pspl_library_init(&loaded);
+        pspl_library_init(&recovered);
+        populate_scaled_library(&library, game_count, session_count);
+        assert(library.game_count == game_count && library.session_count == session_count);
+        assert(library.game_capacity >= game_count && library.session_capacity >= session_count);
+        for (i = 0; i < game_count; ++i)
+            assert(library.games[i].session_count == session_count / game_count);
+        printf("stress %lu games / %lu sessions: %lu bytes capacity\n",
+               (unsigned long)game_count, (unsigned long)session_count,
+               (unsigned long)(library.game_capacity * sizeof(pspl_game_t) +
+                               library.session_capacity * sizeof(pspl_session_t)));
+
+        indices = (size_t *)malloc(game_count * sizeof(*indices));
+        assert(indices != NULL);
+        count = pspl_library_filter_sort(&library, PSPL_PLATFORM_ALL,
+                                         PSPL_SORT_TITLE, indices, game_count);
+        assert(count == (int)game_count);
+        assert(strcmp(library.games[indices[0]].title, "Stress Game 0000") == 0);
+        free(indices);
+
+        assert(pspl_storage_save(path, &library) == 0);
+        assert(pspl_storage_save(path, &library) == 0);
+        assert(pspl_storage_load(path, &loaded) == 0);
+        assert(loaded.game_count == game_count && loaded.session_count == session_count);
+        assert(loaded.games[0].total_seconds == session_count / game_count);
+        corrupt_first_byte(path);
+        assert(pspl_storage_load(path, &recovered) != 0);
+        {
+            char backup[80];
+            snprintf(backup, sizeof(backup), "%s.bak", path);
+            assert(pspl_storage_load(backup, &recovered) == 0);
+        }
+        assert(recovered.game_count == game_count && recovered.session_count == session_count);
+        remove(path);
+        {
+            char backup[80];
+            char temporary[80];
+            snprintf(backup, sizeof(backup), "%s.bak", path);
+            snprintf(temporary, sizeof(temporary), "%s.tmp", path);
+            remove(backup);
+            remove(temporary);
+        }
+        pspl_library_free(&library);
+        pspl_library_free(&loaded);
+        pspl_library_free(&recovered);
+    }
 }
 
 int main(void)
@@ -310,6 +420,7 @@ int main(void)
     test_events();
     test_storage();
     test_psp_tracker_adapter();
+    test_stress_scaling();
     puts("PSP Library core tests: OK");
     return 0;
 }

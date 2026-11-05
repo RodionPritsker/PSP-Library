@@ -23,12 +23,21 @@ static void add_demo_game(pspl_library_t *library, pspl_platform_t platform,
         pspl_game_t *stored = &library->games[library->game_count - 1];
         uint32_t part = seconds / 3U;
         int i;
-        for (i = 0; i < 3 && library->session_count < PSPL_MAX_SESSIONS; ++i) {
-            pspl_session_t *session = &library->sessions[library->session_count++];
-            snprintf(session->game_id, sizeof(session->game_id), "%s", stored->id);
-            session->started_at = last - (uint32_t)(2 - i) * 86400U;
-            session->duration_seconds = i == 2 ? seconds - part * 2U : part;
-            session->ended_at = session->started_at + session->duration_seconds;
+        stored->total_seconds = 0;
+        stored->session_count = 0;
+        stored->first_started_at = 0;
+        stored->last_started_at = 0;
+        for (i = 0; i < 3; ++i) {
+            pspl_event_t event;
+            uint32_t started_at = last - (uint32_t)(2 - i) * 86400U;
+            uint32_t duration = i == 2 ? seconds - part * 2U : part;
+            event.type = PSPL_EVENT_GAME_STARTED;
+            event.game_id = stored->id;
+            event.timestamp = started_at;
+            pspl_library_handle_event(library, &event);
+            event.type = PSPL_EVENT_GAME_STOPPED;
+            event.timestamp = started_at + duration;
+            pspl_library_handle_event(library, &event);
         }
     }
 }

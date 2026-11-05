@@ -18,6 +18,50 @@ void pspl_library_init(pspl_library_t *library)
     if (library != NULL) memset(library, 0, sizeof(*library));
 }
 
+void pspl_library_free(pspl_library_t *library)
+{
+    if (library == NULL) return;
+    free(library->games);
+    free(library->sessions);
+    memset(library, 0, sizeof(*library));
+}
+
+static int reserve_games(pspl_library_t *library, size_t required)
+{
+    size_t capacity;
+    pspl_game_t *games;
+    if (required <= library->game_capacity) return 0;
+    capacity = library->game_capacity == 0 ? PSPL_INITIAL_GAME_CAPACITY : library->game_capacity;
+    while (capacity < required) {
+        if (capacity > (size_t)-1 / 2U) return -1;
+        capacity *= 2U;
+    }
+    if (capacity > (size_t)-1 / sizeof(*games)) return -1;
+    games = (pspl_game_t *)realloc(library->games, capacity * sizeof(*games));
+    if (games == NULL) return -1;
+    library->games = games;
+    library->game_capacity = capacity;
+    return 0;
+}
+
+static int reserve_sessions(pspl_library_t *library, size_t required)
+{
+    size_t capacity;
+    pspl_session_t *sessions;
+    if (required <= library->session_capacity) return 0;
+    capacity = library->session_capacity == 0 ? PSPL_INITIAL_SESSION_CAPACITY : library->session_capacity;
+    while (capacity < required) {
+        if (capacity > (size_t)-1 / 2U) return -1;
+        capacity *= 2U;
+    }
+    if (capacity > (size_t)-1 / sizeof(*sessions)) return -1;
+    sessions = (pspl_session_t *)realloc(library->sessions, capacity * sizeof(*sessions));
+    if (sessions == NULL) return -1;
+    library->sessions = sessions;
+    library->session_capacity = capacity;
+    return 0;
+}
+
 const char *pspl_platform_name(pspl_platform_t platform)
 {
     switch (platform) {
@@ -69,7 +113,8 @@ int pspl_library_add_game(pspl_library_t *library, const pspl_game_t *game)
 {
     if (library == NULL || game == NULL || game->id[0] == '\0') return -1;
     if (pspl_library_find_game(library, game->id) != NULL) return -2;
-    if (library->game_count >= PSPL_MAX_GAMES) return -3;
+    if (library->game_count == (size_t)-1) return -3;
+    if (reserve_games(library, library->game_count + 1) != 0) return -3;
     library->games[library->game_count] = *game;
     library->games[library->game_count].title[PSPL_TITLE_LEN - 1] = '\0';
     library->games[library->game_count].platform[PSPL_PLATFORM_LEN - 1] = '\0';
@@ -77,6 +122,20 @@ int pspl_library_add_game(pspl_library_t *library, const pspl_game_t *game)
     library->games[library->game_count].version[PSPL_VERSION_LEN - 1] = '\0';
     library->games[library->game_count].cover_path[PSPL_COVER_PATH_LEN - 1] = '\0';
     library->game_count++;
+    return 0;
+}
+
+int pspl_library_append_session(pspl_library_t *library, const pspl_session_t *session)
+{
+    if (library == NULL || session == NULL || session->game_id[0] == '\0') return -1;
+    if (pspl_library_find_game_const(library, session->game_id) == NULL) return -2;
+    if (session->ended_at < session->started_at ||
+        session->duration_seconds != session->ended_at - session->started_at) return -3;
+    if (library->session_count == (size_t)-1) return -4;
+    if (reserve_sessions(library, library->session_count + 1) != 0) return -4;
+    library->sessions[library->session_count] = *session;
+    library->sessions[library->session_count].game_id[PSPL_ID_LEN - 1] = '\0';
+    library->session_count++;
     return 0;
 }
 
@@ -110,18 +169,16 @@ static int close_active(pspl_library_t *library, uint32_t ended_at)
     if (library->active_game_id[0] == '\0') return 0;
     game = pspl_library_find_game(library, library->active_game_id);
     if (game == NULL) return -1;
-    if (library->session_count >= PSPL_MAX_SESSIONS) return -5;
     if (ended_at < library->active_started_at) ended_at = library->active_started_at;
     duration = ended_at - library->active_started_at;
+    if (reserve_sessions(library, library->session_count + 1) != 0) return -5;
     game->total_seconds += duration;
     game->session_count++;
-    if (library->session_count < PSPL_MAX_SESSIONS) {
-        session = &library->sessions[library->session_count++];
-        copy_string(session->game_id, sizeof(session->game_id), game->id);
-        session->started_at = library->active_started_at;
-        session->ended_at = ended_at;
-        session->duration_seconds = duration;
-    }
+    session = &library->sessions[library->session_count++];
+    copy_string(session->game_id, sizeof(session->game_id), game->id);
+    session->started_at = library->active_started_at;
+    session->ended_at = ended_at;
+    session->duration_seconds = duration;
     library->active_game_id[0] = '\0';
     library->active_started_at = 0;
     return 0;
@@ -191,7 +248,8 @@ int pspl_library_filter_sort(const pspl_library_t *library,
 {
     size_t i;
     size_t count = 0;
-    if (library == NULL || indices == NULL) return -1;
+    if (library == NULL || (indices == NULL && capacity != 0)) return -1;
+    if (capacity == 0) return 0;
     for (i = 0; i < library->game_count && count < capacity; ++i) {
         if (platform == PSPL_PLATFORM_ALL ||
             pspl_platform_from_name(library->games[i].platform) == platform) {

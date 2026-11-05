@@ -5,11 +5,10 @@
 #include <string.h>
 #include <stdarg.h>
 
-#define PSPL_DB_BUFFER_SIZE 65536
+#define PSPL_STORAGE_LINE_SIZE 1024
 
-static uint32_t crc32_bytes(const unsigned char *data, size_t length)
+static uint32_t crc32_update(uint32_t crc, const unsigned char *data, size_t length)
 {
-    uint32_t crc = 0xFFFFFFFFU;
     size_t i;
     int bit;
     for (i = 0; i < length; ++i) {
@@ -17,20 +16,47 @@ static uint32_t crc32_bytes(const unsigned char *data, size_t length)
         for (bit = 0; bit < 8; ++bit)
             crc = (crc >> 1) ^ (0xEDB88320U & (uint32_t)-(int)(crc & 1U));
     }
-    return ~crc;
+    return crc;
 }
 
-static int append_line(char *buffer, size_t capacity, size_t *used, const char *format, ...)
+static int write_payload_line(FILE *file, uint32_t *crc, const char *format, ...)
 {
+    char line[PSPL_STORAGE_LINE_SIZE];
     va_list args;
     int written;
-    if (*used >= capacity) return -1;
+
     va_start(args, format);
-    written = vsnprintf(buffer + *used, capacity - *used, format, args);
+    written = vsnprintf(line, sizeof(line), format, args);
     va_end(args);
-    if (written < 0 || (size_t)written >= capacity - *used) return -1;
-    *used += (size_t)written;
+    if (written < 0 || (size_t)written >= sizeof(line)) return -1;
+    if (fwrite(line, 1, (size_t)written, file) != (size_t)written) return -1;
+    *crc = crc32_update(*crc, (const unsigned char *)line, (size_t)written);
     return 0;
+}
+
+static int read_payload_line(FILE *file, char *line, size_t capacity, uint32_t *crc)
+{
+    size_t length;
+
+    if (fgets(line, (int)capacity, file) == NULL) return 0;
+    length = strlen(line);
+    if (length == 0 || line[length - 1] != '\n') return -1;
+    *crc = crc32_update(*crc, (const unsigned char *)line, length);
+    line[length - 1] = '\0';
+    if (length >= 2 && line[length - 2] == '\r') line[length - 2] = '\0';
+    return 1;
+}
+
+static int read_unchecked_line(FILE *file, char *line, size_t capacity)
+{
+    size_t length;
+
+    if (fgets(line, (int)capacity, file) == NULL) return 0;
+    length = strlen(line);
+    if (length == 0 || line[length - 1] != '\n') return -1;
+    line[length - 1] = '\0';
+    if (length >= 2 && line[length - 2] == '\r') line[length - 2] = '\0';
+    return 1;
 }
 
 static int encode_field(const char *source, char *destination, size_t capacity)
@@ -75,10 +101,17 @@ static void decode_field(char *text)
     *write = '\0';
 }
 
+static void copy_field(char *destination, size_t capacity, const char *source)
+{
+    if (capacity == 0) return;
+    snprintf(destination, capacity, "%s", source == NULL ? "" : source);
+}
+
 int pspl_storage_exists(const char *path)
 {
+    FILE *file;
     if (path == NULL) return 0;
-    FILE *file = fopen(path, "rb");
+    file = fopen(path, "rb");
     if (file == NULL) return 0;
     fclose(file);
     return 1;
@@ -86,19 +119,29 @@ int pspl_storage_exists(const char *path)
 
 int pspl_storage_save(const char *path, const pspl_library_t *library)
 {
-    static char buffer[PSPL_DB_BUFFER_SIZE];
     char temporary[256];
     char backup[256];
-    size_t used = 0;
     size_t i;
-    uint32_t checksum;
-    FILE *file;
     int path_length;
+    uint32_t crc = 0xFFFFFFFFU;
+    FILE *file;
 
     if (path == NULL || library == NULL ||
-        library->game_count > PSPL_MAX_GAMES || library->session_count > PSPL_MAX_SESSIONS) return -1;
-    if (append_line(buffer, sizeof(buffer), &used, "PSPLIB %d\n", PSPL_DB_VERSION) != 0) return -2;
-    if (append_line(buffer, sizeof(buffer), &used, "GAMES %lu\n", (unsigned long)library->game_count) != 0) return -2;
+        library->game_count > PSPL_STORAGE_MAX_GAMES ||
+        library->session_count > PSPL_STORAGE_MAX_SESSIONS) return -1;
+    path_length = snprintf(temporary, sizeof(temporary), "%s.tmp", path);
+    if (path_length < 0 || (size_t)path_length >= sizeof(temporary)) return -2;
+    path_length = snprintf(backup, sizeof(backup), "%s.bak", path);
+    if (path_length < 0 || (size_t)path_length >= sizeof(backup)) return -2;
+
+    file = fopen(temporary, "wb");
+    if (file == NULL) return -3;
+    if (write_payload_line(file, &crc, "PSPLIB %d\n", PSPL_DB_VERSION) != 0 ||
+        write_payload_line(file, &crc, "GAMES %lu\n", (unsigned long)library->game_count) != 0) {
+        fclose(file);
+        remove(temporary);
+        return -4;
+    }
     for (i = 0; i < library->game_count; ++i) {
         const pspl_game_t *game = &library->games[i];
         char id[PSPL_ID_LEN * 2];
@@ -112,45 +155,46 @@ int pspl_storage_save(const char *path, const pspl_library_t *library)
             encode_field(game->platform, platform, sizeof(platform)) != 0 ||
             encode_field(game->content_key, content_key, sizeof(content_key)) != 0 ||
             encode_field(game->version, version, sizeof(version)) != 0 ||
-            encode_field(game->cover_path, cover_path, sizeof(cover_path)) != 0) return -2;
-        if (append_line(buffer, sizeof(buffer), &used,
-                        "G|%s|%s|%s|%s|%s|%lu|%lu|%lu|%lu|%u|%s\n",
-                        id, title, platform, content_key, version,
-                        (unsigned long)game->total_seconds, (unsigned long)game->session_count,
-                        (unsigned long)game->first_started_at, (unsigned long)game->last_started_at,
-                        (unsigned int)game->file_present, cover_path) != 0) return -2;
+            encode_field(game->cover_path, cover_path, sizeof(cover_path)) != 0 ||
+            write_payload_line(file, &crc,
+                               "G|%s|%s|%s|%s|%s|%lu|%lu|%lu|%lu|%u|%s\n",
+                               id, title, platform, content_key, version,
+                               (unsigned long)game->total_seconds,
+                               (unsigned long)game->session_count,
+                               (unsigned long)game->first_started_at,
+                               (unsigned long)game->last_started_at,
+                               (unsigned int)game->file_present, cover_path) != 0) {
+            fclose(file);
+            remove(temporary);
+            return -4;
+        }
     }
-    if (append_line(buffer, sizeof(buffer), &used, "SESSIONS %lu\n", (unsigned long)library->session_count) != 0) return -2;
+    if (write_payload_line(file, &crc, "SESSIONS %lu\n", (unsigned long)library->session_count) != 0) {
+        fclose(file);
+        remove(temporary);
+        return -4;
+    }
     for (i = 0; i < library->session_count; ++i) {
         const pspl_session_t *session = &library->sessions[i];
         char game_id[PSPL_ID_LEN * 2];
-        if (encode_field(session->game_id, game_id, sizeof(game_id)) != 0) return -2;
-        if (append_line(buffer, sizeof(buffer), &used, "S|%s|%lu|%lu|%lu\n",
-                        game_id, (unsigned long)session->started_at,
-                        (unsigned long)session->ended_at, (unsigned long)session->duration_seconds) != 0) return -2;
+        if (encode_field(session->game_id, game_id, sizeof(game_id)) != 0 ||
+            write_payload_line(file, &crc, "S|%s|%lu|%lu|%lu\n", game_id,
+                               (unsigned long)session->started_at,
+                               (unsigned long)session->ended_at,
+                               (unsigned long)session->duration_seconds) != 0) {
+            fclose(file);
+            remove(temporary);
+            return -4;
+        }
     }
-    checksum = crc32_bytes((const unsigned char *)buffer, used);
-    if (append_line(buffer, sizeof(buffer), &used, "CHECKSUM %08lX\n", (unsigned long)checksum) != 0) return -2;
-
-    path_length = snprintf(temporary, sizeof(temporary), "%s.tmp", path);
-    if (path_length < 0 || (size_t)path_length >= sizeof(temporary)) return -3;
-    path_length = snprintf(backup, sizeof(backup), "%s.bak", path);
-    if (path_length < 0 || (size_t)path_length >= sizeof(backup)) return -3;
-    file = fopen(temporary, "wb");
-    if (file == NULL) return -3;
-    if (fwrite(buffer, 1, used, file) != used) {
-        fclose(file);
-        remove(temporary);
-        return -4;
-    }
-    if (fflush(file) != 0) {
-        fclose(file);
-        remove(temporary);
-        return -4;
-    }
-    if (fclose(file) != 0) {
-        remove(temporary);
-        return -4;
+    {
+        int write_result = fprintf(file, "CHECKSUM %08lX\n", (unsigned long)~crc);
+        int flush_result = fflush(file);
+        int close_result = fclose(file);
+        if (write_result < 0 || flush_result != 0 || close_result != 0) {
+            remove(temporary);
+            return -4;
+        }
     }
     remove(backup);
     if (pspl_storage_exists(path) && rename(path, backup) != 0) {
@@ -191,6 +235,17 @@ static int parse_unsigned(const char *text, uint32_t *value)
     return 0;
 }
 
+static int parse_checksum(const char *text, uint32_t *value)
+{
+    char *end;
+    unsigned long parsed;
+    if (text == NULL || value == NULL || strncmp(text, "CHECKSUM ", 9) != 0) return -1;
+    parsed = strtoul(text + 9, &end, 16);
+    if (end == text + 9 || *end != '\0' || parsed > 0xFFFFFFFFUL) return -1;
+    *value = (uint32_t)parsed;
+    return 0;
+}
+
 typedef struct {
     char old_id[PSPL_ID_LEN];
     char new_id[PSPL_ID_LEN];
@@ -225,13 +280,13 @@ static void merge_game(pspl_game_t *destination, const pspl_game_t *source)
     if (source->last_started_at > destination->last_started_at) {
         destination->last_started_at = source->last_started_at;
         if (source->version[0] != '\0')
-            snprintf(destination->version, sizeof(destination->version), "%s", source->version);
+            copy_field(destination->version, sizeof(destination->version), source->version);
     }
     if (source->file_present) destination->file_present = 1;
     if (destination->cover_path[0] == '\0' && source->cover_path[0] != '\0')
-        snprintf(destination->cover_path, sizeof(destination->cover_path), "%s", source->cover_path);
+        copy_field(destination->cover_path, sizeof(destination->cover_path), source->cover_path);
     if (destination->version[0] == '\0' && source->version[0] != '\0')
-        snprintf(destination->version, sizeof(destination->version), "%s", source->version);
+        copy_field(destination->version, sizeof(destination->version), source->version);
 }
 
 static void migrate_v1_identity(pspl_game_t *game)
@@ -243,14 +298,12 @@ static void migrate_v1_identity(pspl_game_t *game)
         return;
     body = game->content_key + 4;
     separator = strchr(body, ':');
-    /* Old tracker keys were PSP:<content-id>:<version>. Only migrate keys
-       whose first component looks like a region-aware PSP content id. */
     if (separator == NULL || strchr(body, '-') == NULL || separator[1] == '\0') return;
     if ((size_t)(separator - game->content_key) >= sizeof(stable_key)) return;
     memcpy(stable_key, game->content_key, (size_t)(separator - game->content_key));
     stable_key[separator - game->content_key] = '\0';
-    snprintf(game->version, sizeof(game->version), "%s", separator + 1);
-    snprintf(game->content_key, sizeof(game->content_key), "%s", stable_key);
+    copy_field(game->version, sizeof(game->version), separator + 1);
+    copy_field(game->content_key, sizeof(game->content_key), stable_key);
 }
 
 static const char *mapped_id(const legacy_id_map_t *maps, size_t count, const char *old_id)
@@ -262,112 +315,127 @@ static const char *mapped_id(const legacy_id_map_t *maps, size_t count, const ch
     return old_id;
 }
 
+static int parse_game_line(char *line, int db_version, pspl_game_t *game,
+                           char old_id[PSPL_ID_LEN])
+{
+    char canonical_id[PSPL_ID_LEN];
+    char *cursor;
+    char *field;
+    uint32_t number;
+
+    if (line[0] != 'G' || line[1] != '|') return -1;
+    memset(game, 0, sizeof(*game));
+    cursor = line + 2;
+    field = next_field(&cursor); if (field == NULL) return -1; decode_field(field); copy_field(game->id, sizeof(game->id), field);
+    field = next_field(&cursor); if (field == NULL) return -1; decode_field(field); copy_field(game->title, sizeof(game->title), field);
+    field = next_field(&cursor); if (field == NULL) return -1; decode_field(field); copy_field(game->platform, sizeof(game->platform), field);
+    field = next_field(&cursor); if (field == NULL) return -1; decode_field(field); copy_field(game->content_key, sizeof(game->content_key), field);
+    if (db_version >= 2) {
+        field = next_field(&cursor); if (field == NULL) return -1; decode_field(field); copy_field(game->version, sizeof(game->version), field);
+    }
+    field = next_field(&cursor); if (parse_unsigned(field, &number) != 0) return -1; game->total_seconds = number;
+    field = next_field(&cursor); if (parse_unsigned(field, &number) != 0) return -1; game->session_count = number;
+    field = next_field(&cursor); if (parse_unsigned(field, &number) != 0) return -1; game->first_started_at = number;
+    field = next_field(&cursor); if (parse_unsigned(field, &number) != 0) return -1; game->last_started_at = number;
+    field = next_field(&cursor); if (parse_unsigned(field, &number) != 0) return -1; game->file_present = (uint8_t)number;
+    field = next_field(&cursor); if (field == NULL || cursor != NULL) return -1; decode_field(field); copy_field(game->cover_path, sizeof(game->cover_path), field);
+    copy_field(old_id, PSPL_ID_LEN, game->id);
+    if (db_version == 1) migrate_v1_identity(game);
+    if (pspl_make_game_id(pspl_platform_from_name(game->platform), game->content_key, canonical_id) != 0) return -1;
+    copy_field(game->id, sizeof(game->id), canonical_id);
+    return 0;
+}
+
 int pspl_storage_load(const char *path, pspl_library_t *library)
 {
-    FILE *file;
-    static unsigned char buffer[PSPL_DB_BUFFER_SIZE];
-    size_t length;
-    char *line;
-    char *cursor;
-    char *checksum_line = NULL;
-    char *expected_text;
-    unsigned long expected_checksum;
+    pspl_library_t parsed;
+    legacy_id_map_t *maps = NULL;
+    size_t map_count = 0;
+    FILE *file = NULL;
+    char line[PSPL_STORAGE_LINE_SIZE];
+    uint32_t crc = 0xFFFFFFFFU;
+    uint32_t expected_checksum;
     uint32_t expected_games;
     uint32_t expected_sessions;
-    uint32_t loaded_games = 0;
-    uint32_t loaded_sessions = 0;
+    uint32_t i;
+    int db_version;
+    int status;
+    int result = -6;
+
     if (path == NULL || library == NULL) return -1;
+    pspl_library_init(&parsed);
     file = fopen(path, "rb");
     if (file == NULL) return -2;
-    length = fread(buffer, 1, sizeof(buffer) - 1, file);
-    fclose(file);
-    if (length == 0 || length >= sizeof(buffer)) return -3;
-    buffer[length] = '\0';
-    checksum_line = strstr((char *)buffer, "\nCHECKSUM ");
-    if (checksum_line == NULL) return -4;
-    ++checksum_line;
-    expected_text = checksum_line + 9;
-    if (sscanf(expected_text, "%lx", &expected_checksum) != 1) return -4;
-    *checksum_line = '\0';
-    if (crc32_bytes(buffer, (size_t)(checksum_line - (char *)buffer)) != (uint32_t)expected_checksum) return -5;
 
-    pspl_library_init(library);
-    line = strtok((char *)buffer, "\n");
-    if (line == NULL) return -6;
-    {
-        int db_version;
-        legacy_id_map_t maps[PSPL_MAX_GAMES];
-        size_t map_count = 0;
-        if (strcmp(line, "PSPLIB 1") == 0) db_version = 1;
-        else if (strcmp(line, "PSPLIB 2") == 0) db_version = 2;
-        else return -6;
-    line = strtok(NULL, "\n");
-    if (line == NULL || strncmp(line, "GAMES ", 6) != 0 ||
-        parse_unsigned(line + 6, &expected_games) != 0 || expected_games > PSPL_MAX_GAMES) return -6;
-    line = strtok(NULL, "\n");
-    while (line != NULL && strncmp(line, "SESSIONS ", 9) != 0 && loaded_games < expected_games) {
+    status = read_payload_line(file, line, sizeof(line), &crc);
+    if (status != 1 || (strcmp(line, "PSPLIB 1") != 0 && strcmp(line, "PSPLIB 2") != 0)) goto fail;
+    db_version = strcmp(line, "PSPLIB 1") == 0 ? 1 : 2;
+    status = read_payload_line(file, line, sizeof(line), &crc);
+    if (status != 1 || strncmp(line, "GAMES ", 6) != 0 ||
+        parse_unsigned(line + 6, &expected_games) != 0 ||
+        expected_games > PSPL_STORAGE_MAX_GAMES) goto fail;
+    maps = (legacy_id_map_t *)calloc(expected_games == 0 ? 1 : expected_games, sizeof(*maps));
+    if (maps == NULL) {
+        result = -7;
+        goto fail;
+    }
+    for (i = 0; i < expected_games; ++i) {
         pspl_game_t game;
         char old_id[PSPL_ID_LEN];
-        char canonical_id[PSPL_ID_LEN];
-        char *field;
-        uint32_t number;
-        if (line[0] != 'G' || line[1] != '|') return -6;
-        memset(&game, 0, sizeof(game));
-        cursor = line + 2;
-        field = next_field(&cursor); if (field == NULL) return -6; decode_field(field); strncpy(game.id, field, sizeof(game.id) - 1);
-        field = next_field(&cursor); if (field == NULL) return -6; decode_field(field); strncpy(game.title, field, sizeof(game.title) - 1);
-        field = next_field(&cursor); if (field == NULL) return -6; decode_field(field); strncpy(game.platform, field, sizeof(game.platform) - 1);
-        field = next_field(&cursor); if (field == NULL) return -6; decode_field(field); strncpy(game.content_key, field, sizeof(game.content_key) - 1);
-        if (db_version >= 2) {
-            field = next_field(&cursor); if (field == NULL) return -6; decode_field(field); strncpy(game.version, field, sizeof(game.version) - 1);
+        pspl_game_t *existing;
+        if (read_payload_line(file, line, sizeof(line), &crc) != 1 ||
+            parse_game_line(line, db_version, &game, old_id) != 0) goto fail;
+        existing = find_identity(&parsed, game.platform, game.content_key);
+        if (existing != NULL) {
+            merge_game(existing, &game);
+            copy_field(game.id, sizeof(game.id), existing->id);
+        } else if (pspl_library_add_game(&parsed, &game) != 0) {
+            result = -7;
+            goto fail;
         }
-        field = next_field(&cursor); if (parse_unsigned(field, &number) != 0) return -6; game.total_seconds = number;
-        field = next_field(&cursor); if (parse_unsigned(field, &number) != 0) return -6; game.session_count = number;
-        field = next_field(&cursor); if (parse_unsigned(field, &number) != 0) return -6; game.first_started_at = number;
-        field = next_field(&cursor); if (parse_unsigned(field, &number) != 0) return -6; game.last_started_at = number;
-        field = next_field(&cursor); if (parse_unsigned(field, &number) != 0) return -6; game.file_present = (uint8_t)number;
-        field = next_field(&cursor); if (field == NULL || cursor != NULL) return -6; decode_field(field); strncpy(game.cover_path, field, sizeof(game.cover_path) - 1);
-        snprintf(old_id, sizeof(old_id), "%s", game.id);
-        if (db_version == 1) migrate_v1_identity(&game);
-        if (pspl_make_game_id(pspl_platform_from_name(game.platform), game.content_key, canonical_id) != 0) return -7;
-        snprintf(game.id, sizeof(game.id), "%s", canonical_id);
-        {
-            pspl_game_t *existing = find_identity(library, game.platform, game.content_key);
-            if (existing != NULL) {
-                merge_game(existing, &game);
-                snprintf(canonical_id, sizeof(canonical_id), "%s", existing->id);
-            } else if (pspl_library_add_game(library, &game) != 0) {
-                return -7;
-            }
-        }
-        if (map_count < PSPL_MAX_GAMES) {
-            snprintf(maps[map_count].old_id, sizeof(maps[map_count].old_id), "%s", old_id);
-            snprintf(maps[map_count].new_id, sizeof(maps[map_count].new_id), "%s", canonical_id);
-            ++map_count;
-        }
-        ++loaded_games;
-        line = strtok(NULL, "\n");
+        copy_field(maps[map_count].old_id, sizeof(maps[map_count].old_id), old_id);
+        copy_field(maps[map_count].new_id, sizeof(maps[map_count].new_id), game.id);
+        ++map_count;
     }
-    if (loaded_games != expected_games || line == NULL || strncmp(line, "SESSIONS ", 9) != 0 ||
-        parse_unsigned(line + 9, &expected_sessions) != 0 || expected_sessions > PSPL_MAX_SESSIONS) return -6;
-    line = strtok(NULL, "\n");
-    while (line != NULL && loaded_sessions < expected_sessions) {
+
+    if (read_payload_line(file, line, sizeof(line), &crc) != 1 ||
+        strncmp(line, "SESSIONS ", 9) != 0 ||
+        parse_unsigned(line + 9, &expected_sessions) != 0 ||
+        expected_sessions > PSPL_STORAGE_MAX_SESSIONS) goto fail;
+    for (i = 0; i < expected_sessions; ++i) {
         pspl_session_t session;
+        char *cursor;
         char *field;
         uint32_t number;
-        if (line[0] != 'S' || line[1] != '|') return -6;
+        if (read_payload_line(file, line, sizeof(line), &crc) != 1 ||
+            line[0] != 'S' || line[1] != '|') goto fail;
         memset(&session, 0, sizeof(session));
         cursor = line + 2;
-        field = next_field(&cursor); if (field == NULL) return -6; decode_field(field); strncpy(session.game_id, field, sizeof(session.game_id) - 1);
-        field = next_field(&cursor); if (parse_unsigned(field, &number) != 0) return -6; session.started_at = number;
-        field = next_field(&cursor); if (parse_unsigned(field, &number) != 0) return -6; session.ended_at = number;
-        field = next_field(&cursor); if (parse_unsigned(field, &number) != 0 || cursor != NULL) return -6; session.duration_seconds = number;
-        snprintf(session.game_id, sizeof(session.game_id), "%s", mapped_id(maps, map_count, session.game_id));
-        if (pspl_library_find_game_const(library, session.game_id) == NULL) return -8;
-        library->sessions[library->session_count++] = session;
-        ++loaded_sessions;
-        line = strtok(NULL, "\n");
+        field = next_field(&cursor); if (field == NULL) goto fail; decode_field(field);
+        copy_field(session.game_id, sizeof(session.game_id), mapped_id(maps, map_count, field));
+        field = next_field(&cursor); if (parse_unsigned(field, &number) != 0) goto fail; session.started_at = number;
+        field = next_field(&cursor); if (parse_unsigned(field, &number) != 0) goto fail; session.ended_at = number;
+        field = next_field(&cursor); if (parse_unsigned(field, &number) != 0 || cursor != NULL) goto fail; session.duration_seconds = number;
+        if (pspl_library_append_session(&parsed, &session) != 0) {
+            result = -8;
+            goto fail;
+        }
     }
-    return loaded_sessions == expected_sessions && line == NULL ? 0 : -6;
+    if (read_unchecked_line(file, line, sizeof(line)) != 1 ||
+        parse_checksum(line, &expected_checksum) != 0 ||
+        ~crc != expected_checksum || fgetc(file) != EOF) {
+        result = -5;
+        goto fail;
     }
+    fclose(file);
+    free(maps);
+    pspl_library_free(library);
+    *library = parsed;
+    return 0;
+
+fail:
+    if (file != NULL) fclose(file);
+    free(maps);
+    pspl_library_free(&parsed);
+    return result;
 }
