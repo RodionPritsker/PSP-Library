@@ -39,7 +39,6 @@ typedef struct {
     pspl_platform_t filter;
     pspl_sort_t sort;
     pspl_navigation_t navigation;
-    pspl_platform_t last_filter;
 } ui_state_t;
 
 static const pspl_platform_t filter_order[] = {
@@ -283,47 +282,19 @@ static void generate_test_session(pspl_library_t *library, size_t *indices, int 
     pspl_library_handle_event(library, &event);
 }
 
-static unsigned int repeated_direction(unsigned int buttons, unsigned int *previous,
-                                       unsigned int *ticks)
+static uint64_t input_time_us(void)
 {
-    unsigned int direction = buttons & (PSP_CTRL_UP | PSP_CTRL_DOWN | PSP_CTRL_LEFT | PSP_CTRL_RIGHT);
-    unsigned int previous_direction = *previous & (PSP_CTRL_UP | PSP_CTRL_DOWN | PSP_CTRL_LEFT | PSP_CTRL_RIGHT);
-    if (direction == 0) {
-        *ticks = 0;
-        *previous = buttons;
-        return 0;
-    }
-    if (direction != previous_direction) {
-        *ticks = 0;
-        *previous = buttons;
-        return direction;
-    }
-    ++(*ticks);
-    *previous = buttons;
-    if (*ticks >= 7U && ((*ticks - 7U) % 3U) == 0U) return direction;
-    return 0;
+    return (uint64_t)sceKernelGetSystemTimeWide();
 }
 
-static void move_selection(ui_state_t *state, int count, unsigned int direction)
+static unsigned int navigation_direction(unsigned int buttons)
 {
-    if (count <= 0) return;
-    if (state->grid) {
-        if (direction & PSP_CTRL_LEFT) {
-            if (state->selected % PSPL_GRID_COLUMNS != 0) --state->selected;
-        } else if (direction & PSP_CTRL_RIGHT) {
-            if (state->selected + 1 < (size_t)count &&
-                state->selected % PSPL_GRID_COLUMNS != PSPL_GRID_COLUMNS - 1) ++state->selected;
-        } else if (direction & PSP_CTRL_UP) {
-            if (state->selected >= PSPL_GRID_COLUMNS) state->selected -= PSPL_GRID_COLUMNS;
-        } else if (direction & PSP_CTRL_DOWN) {
-            if (state->selected + PSPL_GRID_COLUMNS < (size_t)count)
-                state->selected += PSPL_GRID_COLUMNS;
-        }
-    } else if (direction & PSP_CTRL_UP) {
-        if (state->selected > 0) --state->selected;
-    } else if (direction & PSP_CTRL_DOWN) {
-        if (state->selected + 1 < (size_t)count) ++state->selected;
-    }
+    unsigned int direction = 0;
+    if ((buttons & PSP_CTRL_UP) != 0) direction |= PSPL_NAV_UP;
+    if ((buttons & PSP_CTRL_DOWN) != 0) direction |= PSPL_NAV_DOWN;
+    if ((buttons & PSP_CTRL_LEFT) != 0) direction |= PSPL_NAV_LEFT;
+    if ((buttons & PSP_CTRL_RIGHT) != 0) direction |= PSPL_NAV_RIGHT;
+    return direction;
 }
 
 int pspl_ui_run(pspl_library_t *library, const char *database_path, int demo_mode)
@@ -336,7 +307,10 @@ int pspl_ui_run(pspl_library_t *library, const char *database_path, int demo_mod
     int count;
     int dirty = 1;
     unsigned int previous_buttons = 0;
-    unsigned int direction_ticks = 0;
+    pspl_navigation_repeat_t repeat;
+    int has_view = 0;
+    pspl_platform_t view_filter = PSPL_PLATFORM_ALL;
+    size_t view_count = 0;
     SceCtrlData pad;
 
     memset(&gfx, 0, sizeof(gfx));
@@ -349,7 +323,7 @@ int pspl_ui_run(pspl_library_t *library, const char *database_path, int demo_mod
     pspl_navigation_init(&state.navigation);
     state.grid = 1;
     state.filter = PSPL_PLATFORM_ALL;
-    state.last_filter = state.filter;
+    pspl_navigation_repeat_init(&repeat);
     for (;;) {
         size_t visible;
         size_t pages;
@@ -361,19 +335,20 @@ int pspl_ui_run(pspl_library_t *library, const char *database_path, int demo_mod
             indices = new_indices;
             indices_capacity = library->game_count;
         }
+        if (has_view) {
+            /* Remember against the old index order before replacing it. */
+            pspl_navigation_remember(&state.navigation, view_filter, library, indices,
+                                     view_count, state.selected);
+        }
         count = pspl_library_filter_sort(library, state.filter, state.sort,
                                          indices, indices_capacity);
         if (count < 0) break;
-        if (state.filter == state.last_filter) {
-            pspl_navigation_remember(&state.navigation, state.filter, library, indices,
-                                     (size_t)count, state.selected);
-        }
         pspl_navigation_restore(&state.navigation, state.filter, library, indices,
                                 (size_t)count, &state.selected);
         state.selected = clamp_selection(state.selected, count);
-        pspl_navigation_remember(&state.navigation, state.filter, library, indices,
-                                 (size_t)count, state.selected);
-        state.last_filter = state.filter;
+        has_view = 1;
+        view_filter = state.filter;
+        view_count = (size_t)count;
         if (state.selected != previous_selected) dirty = 1;
         visible = state.grid ? PSPL_GRID_VISIBLE_ITEMS : PSPL_LIST_VISIBLE_ROWS;
         pages = count == 0 ? 1U : ((size_t)count + visible - 1U) / visible;
@@ -433,15 +408,16 @@ int pspl_ui_run(pspl_library_t *library, const char *database_path, int demo_mod
             dirty = 1;
         }
         if (!state.detail) {
-            unsigned int direction = repeated_direction(pad.Buttons, &previous_buttons, &direction_ticks);
+            unsigned int direction = pspl_navigation_repeat(
+                &repeat, navigation_direction(pad.Buttons), input_time_us());
             if (direction != 0) {
-                move_selection(&state, count, direction);
+                pspl_navigation_move(state.grid, &state.selected, (size_t)count, direction);
                 dirty = 1;
             }
         } else {
-            previous_buttons = pad.Buttons;
-            direction_ticks = 0;
+            pspl_navigation_repeat_init(&repeat);
         }
+        previous_buttons = pad.Buttons;
         sceKernelDelayThread(16000);
     }
     free(indices);

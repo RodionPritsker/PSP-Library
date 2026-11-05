@@ -122,23 +122,21 @@ void pspl_text_draw_clipped(float x, float y, float width, const char *text,
                             int scale, uint32_t color)
 {
     size_t index = 0;
-    size_t last_index = 0;
-    size_t characters = 0;
     char character;
     float cursor = x;
+    float ellipsis_width = (float)(17 * scale);
     if (text == NULL || scale < 1 || width <= 0.0f) return;
-    while (text[index] != '\0' && cursor - x + (float)(5 * scale) <= width) {
-        last_index = index;
+    if ((float)pspl_text_width(text, scale) <= width) {
+        pspl_text_draw(x, y, text, scale, color);
+        return;
+    }
+    while (text[index] != '\0' &&
+           cursor - x + (float)(5 * scale) <= width - ellipsis_width) {
         index = next_character(text, index, &character);
         draw_character(cursor, y, character, scale, color);
         cursor += (float)(6 * scale);
-        ++characters;
     }
-    if (text[index] != '\0' && width >= (float)(17 * scale)) {
-        size_t limit = (size_t)((width / (float)(6 * scale)) - 2.0f);
-        (void)last_index;
-        (void)characters;
-        (void)limit;
+    if (width >= ellipsis_width) {
         draw_character(x + width - (float)(17 * scale), y, '.', scale, color);
         draw_character(x + width - (float)(11 * scale), y, '.', scale, color);
         draw_character(x + width - (float)(5 * scale), y, '.', scale, color);

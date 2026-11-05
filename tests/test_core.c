@@ -144,6 +144,155 @@ static void test_navigation_repeated_transitions(void)
     pspl_library_free(&library);
 }
 
+static void test_navigation_ui_sequences(void)
+{
+    pspl_library_t library;
+    pspl_navigation_t navigation;
+    pspl_game_t game;
+    size_t indices[16];
+    size_t selected;
+    char gba_selected_id[PSPL_ID_LEN];
+    char psp_selected_id[PSPL_ID_LEN];
+    int count;
+
+    pspl_library_init(&library);
+    make_game(&game, PSPL_PLATFORM_GBA, "GBA One", "gba-1");
+    game.total_seconds = 10; assert(pspl_library_add_game(&library, &game) == 0);
+    make_game(&game, PSPL_PLATFORM_GBA, "GBA Two", "gba-2");
+    game.total_seconds = 30; assert(pspl_library_add_game(&library, &game) == 0);
+    make_game(&game, PSPL_PLATFORM_GBA, "GBA Three", "gba-3");
+    game.total_seconds = 20; assert(pspl_library_add_game(&library, &game) == 0);
+    make_game(&game, PSPL_PLATFORM_PSP, "PSP One", "psp-1");
+    game.total_seconds = 20; assert(pspl_library_add_game(&library, &game) == 0);
+    make_game(&game, PSPL_PLATFORM_PSP, "PSP Two", "psp-2");
+    game.total_seconds = 40; assert(pspl_library_add_game(&library, &game) == 0);
+
+    pspl_navigation_init(&navigation);
+
+    /* GBA selection survives the filter change and a new sort order. */
+    count = pspl_library_filter_sort(&library, PSPL_PLATFORM_GBA, PSPL_SORT_TITLE,
+                                     indices, sizeof(indices) / sizeof(indices[0]));
+    assert(count == 3);
+    strcpy(gba_selected_id, library.games[indices[2]].id);
+    pspl_navigation_remember(&navigation, PSPL_PLATFORM_GBA, &library, indices,
+                             (size_t)count, 2);
+    count = pspl_library_filter_sort(&library, PSPL_PLATFORM_PSP, PSPL_SORT_TITLE,
+                                     indices, sizeof(indices) / sizeof(indices[0]));
+    selected = 1;
+    pspl_navigation_restore(&navigation, PSPL_PLATFORM_PSP, &library, indices,
+                            (size_t)count, &selected);
+    assert(selected == 0);
+    strcpy(psp_selected_id, library.games[indices[1]].id);
+    pspl_navigation_remember(&navigation, PSPL_PLATFORM_PSP, &library, indices,
+                             (size_t)count, 1);
+    count = pspl_library_filter_sort(&library, PSPL_PLATFORM_GBA, PSPL_SORT_TOTAL_TIME,
+                                     indices, sizeof(indices) / sizeof(indices[0]));
+    selected = 0;
+    pspl_navigation_restore(&navigation, PSPL_PLATFORM_GBA, &library, indices,
+                            (size_t)count, &selected);
+    assert(strcmp(library.games[indices[selected]].id, gba_selected_id) == 0);
+    count = pspl_library_filter_sort(&library, PSPL_PLATFORM_PSP, PSPL_SORT_TOTAL_TIME,
+                                     indices, sizeof(indices) / sizeof(indices[0]));
+    selected = 0;
+    pspl_navigation_restore(&navigation, PSPL_PLATFORM_PSP, &library, indices,
+                            (size_t)count, &selected);
+    assert(strcmp(library.games[indices[selected]].id, psp_selected_id) == 0);
+
+    /* ALL has its own slot, and changing view does not change the game identity. */
+    count = pspl_library_filter_sort(&library, PSPL_PLATFORM_ALL, PSPL_SORT_TITLE,
+                                     indices, sizeof(indices) / sizeof(indices[0]));
+    assert(count == 5);
+    pspl_navigation_remember(&navigation, PSPL_PLATFORM_ALL, &library, indices,
+                             (size_t)count, 3);
+    count = pspl_library_filter_sort(&library, PSPL_PLATFORM_ALL, PSPL_SORT_LAST_PLAYED,
+                                     indices, sizeof(indices) / sizeof(indices[0]));
+    selected = 0;
+    pspl_navigation_restore(&navigation, PSPL_PLATFORM_ALL, &library, indices,
+                            (size_t)count, &selected);
+    assert(strcmp(library.games[indices[selected]].id, navigation.selected_ids[PSPL_PLATFORM_ALL]) == 0);
+
+    pspl_library_free(&library);
+}
+
+static void test_page_navigation(void)
+{
+    static const size_t counts[] = { 5, 6, 7, 12, 13, 100 };
+    static const unsigned int directions[] = {
+        PSPL_NAV_UP, PSPL_NAV_DOWN, PSPL_NAV_LEFT, PSPL_NAV_RIGHT
+    };
+    size_t scenario;
+
+    for (scenario = 0; scenario < sizeof(counts) / sizeof(counts[0]); ++scenario) {
+        int visited[100] = { 0 };
+        size_t queue[100];
+        size_t head = 0;
+        size_t tail = 0;
+        size_t current;
+        size_t direction_index;
+        size_t visited_count = 0;
+        size_t count = counts[scenario];
+
+        visited[0] = 1;
+        queue[tail++] = 0;
+        ++visited_count;
+        while (head < tail) {
+            current = queue[head++];
+            for (direction_index = 0; direction_index < 4; ++direction_index) {
+                size_t next = current;
+                pspl_navigation_move(1, &next, count, directions[direction_index]);
+                assert(next < count);
+                if (!visited[next]) {
+                    visited[next] = 1;
+                    queue[tail++] = next;
+                    ++visited_count;
+                }
+            }
+        }
+        assert(visited_count == count);
+
+        if (count == 7) {
+            current = 5;
+            pspl_navigation_move(1, &current, count, PSPL_NAV_RIGHT);
+            assert(current == 6);
+            pspl_navigation_move(1, &current, count, PSPL_NAV_LEFT);
+            assert(current == 5);
+        }
+        if (count == 13) {
+            current = 9;
+            pspl_navigation_move(1, &current, count, PSPL_NAV_DOWN);
+            assert(current == 12);
+            pspl_navigation_move(1, &current, count, PSPL_NAV_UP);
+            assert(current == 9);
+        }
+    }
+
+    {
+        size_t selected = 0;
+        size_t i;
+        for (i = 0; i < 99; ++i)
+            pspl_navigation_move(0, &selected, 100, PSPL_NAV_DOWN);
+        assert(selected == 99);
+        for (i = 0; i < 99; ++i)
+            pspl_navigation_move(0, &selected, 100, PSPL_NAV_UP);
+        assert(selected == 0);
+    }
+}
+
+static void test_navigation_repeat(void)
+{
+    pspl_navigation_repeat_t repeat;
+
+    pspl_navigation_repeat_init(&repeat);
+    assert(pspl_navigation_repeat(&repeat, PSPL_NAV_RIGHT, 0) == PSPL_NAV_RIGHT);
+    assert(pspl_navigation_repeat(&repeat, PSPL_NAV_RIGHT, 279999) == 0);
+    assert(pspl_navigation_repeat(&repeat, PSPL_NAV_RIGHT, 280000) == PSPL_NAV_RIGHT);
+    assert(pspl_navigation_repeat(&repeat, PSPL_NAV_RIGHT, 384999) == 0);
+    assert(pspl_navigation_repeat(&repeat, PSPL_NAV_RIGHT, 385000) == PSPL_NAV_RIGHT);
+    assert(pspl_navigation_repeat(&repeat, 0, 390000) == 0);
+    assert(pspl_navigation_repeat(&repeat, 0, 500000) == 0);
+    assert(pspl_navigation_repeat(&repeat, PSPL_NAV_RIGHT, 500001) == PSPL_NAV_RIGHT);
+}
+
 static void test_events(void)
 {
     pspl_library_t library;
@@ -573,6 +722,9 @@ int main(void)
     test_ids_and_sorting();
     test_navigation();
     test_navigation_repeated_transitions();
+    test_navigation_ui_sequences();
+    test_page_navigation();
+    test_navigation_repeat();
     test_events();
     test_storage();
     test_psp_tracker_adapter();
