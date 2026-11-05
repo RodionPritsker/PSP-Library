@@ -103,8 +103,13 @@ static void decode_field(char *text)
 
 static void copy_field(char *destination, size_t capacity, const char *source)
 {
+    size_t length;
     if (capacity == 0) return;
-    snprintf(destination, capacity, "%s", source == NULL ? "" : source);
+    if (source == NULL) source = "";
+    length = strlen(source);
+    if (length >= capacity) length = capacity - 1;
+    memcpy(destination, source, length);
+    destination[length] = '\0';
 }
 
 int pspl_storage_exists(const char *path)

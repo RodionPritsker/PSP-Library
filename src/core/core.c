@@ -7,10 +7,13 @@
 
 static void copy_string(char *destination, size_t size, const char *source)
 {
+    size_t length;
     if (size == 0) return;
     if (source == NULL) source = "";
-    strncpy(destination, source, size - 1);
-    destination[size - 1] = '\0';
+    length = strlen(source);
+    if (length >= size) length = size - 1;
+    memcpy(destination, source, length);
+    destination[length] = '\0';
 }
 
 void pspl_library_init(pspl_library_t *library)
