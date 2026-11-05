@@ -2,12 +2,18 @@
 
 #include <pspctrl.h>
 #include <pspdebug.h>
+#include <pspdisplay.h>
+#include <pspge.h>
 #include <pspuser.h>
 
 #include <stdio.h>
 #include <string.h>
 
 #include "psplibrary/storage.h"
+
+#define PSPL_FRAMEBUFFER_STRIDE 512
+#define PSPL_FRAMEBUFFER_HEIGHT 272
+#define PSPL_FRAMEBUFFER_BYTES (PSPL_FRAMEBUFFER_STRIDE * PSPL_FRAMEBUFFER_HEIGHT * 4)
 
 typedef struct {
     int detail;
@@ -25,9 +31,9 @@ static const pspl_platform_t filter_order[] = {
 
 static void clear_screen(void)
 {
+    pspDebugScreenSetBackColor(0x00101820);
     pspDebugScreenClear();
     pspDebugScreenSetXY(0, 0);
-    pspDebugScreenSetBackColor(0x00101820);
     pspDebugScreenSetTextColor(0x00E8F0F8);
 }
 
@@ -168,21 +174,34 @@ int pspl_ui_run(pspl_library_t *library, const char *database_path, int demo_mod
     size_t previous_selected;
     int count;
     int dirty = 1;
+    int displayed_offset = 0;
+    unsigned int vram_base_address;
     SceCtrlData pad;
     unsigned int previous = 0;
 
     memset(&state, 0, sizeof(state));
     state.grid = 1;
     state.filter = PSPL_PLATFORM_ALL;
+    vram_base_address = 0x40000000U | (unsigned int)sceGeEdramGetAddr();
+    pspDebugScreenSetBase((u32 *)vram_base_address);
     for (;;) {
         count = pspl_library_filter_sort(library, state.filter, state.sort, indices, PSPL_MAX_GAMES);
         previous_selected = state.selected;
         state.selected = clamp_selection(state.selected, count);
         if (state.selected != previous_selected) dirty = 1;
         if (dirty) {
+            int draw_offset = displayed_offset == 0 ? PSPL_FRAMEBUFFER_BYTES : 0;
+            pspDebugScreenSetOffset(draw_offset);
             if (state.detail) draw_detail(library, &state, demo_mode, indices, count);
             else draw_library(library, &state, demo_mode, indices, count);
-            dirty = 0;
+            if (sceDisplaySetFrameBuf((void *)(vram_base_address + (unsigned int)draw_offset),
+                                      PSPL_FRAMEBUFFER_STRIDE,
+                                      PSP_DISPLAY_PIXEL_FORMAT_8888,
+                                      PSP_DISPLAY_SETBUF_NEXTVSYNC) >= 0) {
+                sceDisplayWaitVblankStart();
+                displayed_offset = draw_offset;
+                dirty = 0;
+            }
         }
         sceCtrlReadBufferPositive(&pad, 1);
         if ((pad.Buttons & PSP_CTRL_TRIANGLE) && !(previous & PSP_CTRL_TRIANGLE)) break;
