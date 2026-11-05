@@ -530,6 +530,44 @@ static void test_large_demo_fixture(void)
     pspl_library_free(&library);
 }
 
+static unsigned int read_png_u32(const unsigned char value[4])
+{
+    return ((unsigned int)value[0] << 24) | ((unsigned int)value[1] << 16) |
+           ((unsigned int)value[2] << 8) | (unsigned int)value[3];
+}
+
+static void test_cover_assets_are_runtime_sized(void)
+{
+    static const char *paths[] = {
+        "../covers/aurora-quest.png",
+        "../covers/ember-tactics.png",
+        "../covers/neon-racers.png"
+    };
+    size_t i;
+    for (i = 0; i < sizeof(paths) / sizeof(paths[0]); ++i) {
+        unsigned char signature[8];
+        unsigned char chunk_length[4];
+        unsigned char chunk_type[4];
+        unsigned char ihdr[13];
+        FILE *file = fopen(paths[i], "rb");
+        long size;
+        assert(file != NULL);
+        assert(fread(signature, 1, sizeof(signature), file) == sizeof(signature));
+        assert(memcmp(signature, "\x89PNG\r\n\x1a\n", sizeof(signature)) == 0);
+        assert(fread(chunk_length, 1, sizeof(chunk_length), file) == sizeof(chunk_length));
+        assert(read_png_u32(chunk_length) == 13U);
+        assert(fread(chunk_type, 1, sizeof(chunk_type), file) == sizeof(chunk_type));
+        assert(memcmp(chunk_type, "IHDR", sizeof(chunk_type)) == 0);
+        assert(fread(ihdr, 1, sizeof(ihdr), file) == sizeof(ihdr));
+        assert(read_png_u32(ihdr) <= 128U);
+        assert(read_png_u32(ihdr + 4) <= 176U);
+        assert(fseek(file, 0, SEEK_END) == 0);
+        size = ftell(file);
+        assert(size > 0 && size < 200000L);
+        fclose(file);
+    }
+}
+
 int main(void)
 {
     test_ids_and_sorting();
@@ -540,6 +578,7 @@ int main(void)
     test_psp_tracker_adapter();
     test_stress_scaling();
     test_large_demo_fixture();
+    test_cover_assets_are_runtime_sized();
     puts("PSP Library core tests: OK");
     return 0;
 }
