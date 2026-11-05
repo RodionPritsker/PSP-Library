@@ -61,7 +61,7 @@ static void test_events(void)
     assert(library.games[0].first_started_at == 100 && library.games[0].last_started_at == 100);
     event.type = PSPL_EVENT_GAME_STOPPED; event.game_id = library.games[1].id; event.timestamp = 155;
     assert(pspl_library_handle_event(&library, &event) == -4);
-    event.type = PSPL_EVENT_GAME_STOPPED; event.timestamp = 160;
+    event.type = PSPL_EVENT_GAME_STOPPED; event.game_id = library.games[0].id; event.timestamp = 160;
     assert(pspl_library_handle_event(&library, &event) == 0);
     assert(library.games[0].total_seconds == 60 && library.games[0].session_count == 1);
     event.timestamp = 200;
