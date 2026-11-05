@@ -5,7 +5,15 @@
 #include <pspkernel.h>
 #include <string.h>
 
-static unsigned int g_list[2][0x4000] __attribute__((aligned(16)));
+#define PSPL_GFX_LIST_WORDS 262144U
+
+/*
+ * GU keeps command pointers and the temporary vertex allocations in the
+ * active list.  The UI deliberately emits many small sprites for text, so a
+ * 0x4000-word list is not enough once a frame is redrawn several times.
+ * Match the size used by the PSPDEV GU samples and keep both lists aligned.
+ */
+static unsigned int g_list[2][PSPL_GFX_LIST_WORDS] __attribute__((aligned(16)));
 static pspl_gfx_t *g_active;
 
 typedef struct {
@@ -24,9 +32,9 @@ typedef struct {
     float z;
 } pspl_texture_vertex_t;
 
-static void setup_2d(void)
+static int setup_2d(void)
 {
-    sceGuStart(GU_DIRECT, g_list[0]);
+    if (sceGuStart(GU_DIRECT, g_list[0]) < 0) return -1;
     sceGuDrawBuffer(GU_PSM_8888, (void *)0, PSPL_GFX_STRIDE);
     sceGuDispBuffer(PSPL_SCREEN_WIDTH, PSPL_SCREEN_HEIGHT,
                     (void *)(PSPL_GFX_STRIDE * PSPL_SCREEN_HEIGHT), PSPL_GFX_STRIDE);
@@ -41,6 +49,8 @@ static void setup_2d(void)
     sceGuShadeModel(GU_SMOOTH);
     sceGuFinish();
     sceGuSync(0, 0);
+    sceKernelDcacheWritebackAll();
+    return 0;
 }
 
 int pspl_gfx_init(pspl_gfx_t *gfx)
@@ -49,8 +59,11 @@ int pspl_gfx_init(pspl_gfx_t *gfx)
     memset(gfx, 0, sizeof(*gfx));
     gfx->width = PSPL_SCREEN_WIDTH;
     gfx->height = PSPL_SCREEN_HEIGHT;
-    sceGuInit();
-    setup_2d();
+    if (sceGuInit() < 0) return -1;
+    if (setup_2d() != 0) {
+        sceGuTerm();
+        return -1;
+    }
     sceDisplayWaitVblankStart();
     sceGuDisplay(GU_TRUE);
     gfx->initialized = 1;
@@ -68,20 +81,23 @@ void pspl_gfx_shutdown(pspl_gfx_t *gfx)
     if (g_active == gfx) g_active = NULL;
 }
 
-void pspl_gfx_begin(pspl_gfx_t *gfx)
+int pspl_gfx_begin(pspl_gfx_t *gfx)
 {
-    if (gfx == NULL || !gfx->initialized) return;
+    if (gfx == NULL || !gfx->initialized) return -1;
     g_active = gfx;
-    sceGuStart(GU_DIRECT, g_list[gfx->frame & 1U]);
+    if (sceGuStart(GU_DIRECT, g_list[gfx->frame & 1U]) < 0) return -1;
     sceGuDisable(GU_TEXTURE_2D);
     sceGuEnable(GU_BLEND);
     sceGuBlendFunc(GU_ADD, GU_SRC_ALPHA, GU_ONE_MINUS_SRC_ALPHA, 0, 0);
+    return 0;
 }
 
 void pspl_gfx_end(pspl_gfx_t *gfx)
 {
     if (gfx == NULL || !gfx->initialized) return;
     sceGuFinish();
+    /* Flush command data, temporary vertices, and RAM-backed textures. */
+    sceKernelDcacheWritebackAll();
     sceGuSync(0, 0);
     sceDisplayWaitVblankStart();
     sceGuSwapBuffers();
@@ -96,7 +112,8 @@ void pspl_gfx_clear(uint32_t color)
 
 void pspl_gfx_fill_rect(float x, float y, float width, float height, uint32_t color)
 {
-    pspl_vertex_t vertices[2];
+    pspl_vertex_t *vertices = (pspl_vertex_t *)sceGuGetMemory(sizeof(*vertices) * 2U);
+    if (vertices == NULL) return;
     sceGuDisable(GU_TEXTURE_2D);
     sceGuColor(color);
     vertices[0].color = color;
@@ -123,7 +140,8 @@ void pspl_gfx_rect(float x, float y, float width, float height, uint32_t color, 
 void pspl_gfx_gradient_rect(float x, float y, float width, float height,
                             uint32_t top_color, uint32_t bottom_color)
 {
-    pspl_vertex_t vertices[2];
+    pspl_vertex_t *vertices = (pspl_vertex_t *)sceGuGetMemory(sizeof(*vertices) * 2U);
+    if (vertices == NULL) return;
     sceGuDisable(GU_TEXTURE_2D);
     sceGuShadeModel(GU_SMOOTH);
     vertices[0].color = top_color;
@@ -142,8 +160,10 @@ void pspl_gfx_draw_texture(const void *pixels, int texture_width, int texture_he
                            int image_width, int image_height,
                            float x, float y, float width, float height, uint32_t color)
 {
-    pspl_texture_vertex_t vertices[2];
+    pspl_texture_vertex_t *vertices;
     if (pixels == NULL || texture_width <= 0 || texture_height <= 0) return;
+    vertices = (pspl_texture_vertex_t *)sceGuGetMemory(sizeof(*vertices) * 2U);
+    if (vertices == NULL) return;
     sceGuEnable(GU_TEXTURE_2D);
     sceGuTexMode(GU_PSM_8888, 0, 0, GU_FALSE);
     sceGuTexImage(0, texture_width, texture_height, texture_width, pixels);

@@ -17,7 +17,7 @@ typedef struct {
 
 int pspl_gfx_init(pspl_gfx_t *gfx);
 void pspl_gfx_shutdown(pspl_gfx_t *gfx);
-void pspl_gfx_begin(pspl_gfx_t *gfx);
+int pspl_gfx_begin(pspl_gfx_t *gfx);
 void pspl_gfx_end(pspl_gfx_t *gfx);
 void pspl_gfx_clear(uint32_t color);
 void pspl_gfx_fill_rect(float x, float y, float width, float height, uint32_t color);

@@ -18,6 +18,11 @@
 #define PSPL_GRID_ROWS 2
 #define PSPL_GRID_VISIBLE_ITEMS (PSPL_GRID_COLUMNS * PSPL_GRID_ROWS)
 #define PSPL_LIST_VISIBLE_ROWS 6
+#define PSPL_IMAGE_CACHE_CAPACITY 8
+
+#if PSPL_IMAGE_CACHE_CAPACITY < PSPL_GRID_VISIBLE_ITEMS
+#error "The image cache must hold every texture referenced by one grid frame"
+#endif
 
 #define COLOR_BG 0xFF0B1118U
 #define COLOR_PANEL 0xFF14202BU
@@ -318,7 +323,8 @@ int pspl_ui_run(pspl_library_t *library, const char *database_path, int demo_mod
     SceCtrlData pad;
 
     memset(&gfx, 0, sizeof(gfx));
-    if (library == NULL || pspl_gfx_init(&gfx) != 0 || pspl_image_cache_init(&images, 4) != 0) {
+    if (library == NULL || pspl_gfx_init(&gfx) != 0 ||
+        pspl_image_cache_init(&images, PSPL_IMAGE_CACHE_CAPACITY) != 0) {
         pspl_gfx_shutdown(&gfx);
         return -1;
     }
@@ -357,7 +363,7 @@ int pspl_ui_run(pspl_library_t *library, const char *database_path, int demo_mod
         page = count == 0 ? 1U : state.selected / visible + 1U;
         if (dirty) {
             pspl_image_cache_begin_frame(&images);
-            pspl_gfx_begin(&gfx);
+            if (pspl_gfx_begin(&gfx) != 0) break;
             pspl_gfx_clear(COLOR_BG);
             if (state.detail) draw_detail(library, &state, indices, count, &images);
             else {

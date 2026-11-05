@@ -86,13 +86,13 @@ Selection is remembered independently for every platform filter, including when 
 
 `pspl_game_t.cover_path` remains the source of truth and is stored in PSPLIB 2 without a format change. Relative paths are resolved below `ms0:/PSP/GAME/PSPLIBRARY/`; absolute `ms0:/` and `ef0:/` paths are also accepted.
 
-PNG files are decoded only when first needed. The decoder streams source rows and scales into a maximum 128x176 RGBA texture, so large source images do not require a full-size decoded bitmap. Four cache slots are used with oldest-unused replacement. Missing, corrupt, unsupported, or absent files draw a platform-colored placeholder and never terminate the app. Covers are used in the grid, list, and detail screen and survive EBOOT/database updates because they are independent files.
+PNG files are decoded only when first needed. The decoder streams source rows and scales into a maximum 128x176 RGBA texture, so large source images do not require a full-size decoded bitmap. Eight cache slots are used with oldest-unused replacement; entries referenced by the current GU frame are pinned until that frame has been synchronized. Missing, corrupt, unsupported, or absent files draw a platform-colored placeholder and never terminate the app. Covers are used in the grid, list, and detail screen and survive EBOOT/database updates because they are independent files.
 
 The included `covers/` files are original project test artwork. No network downloading is performed.
 
 ## Rendering and memory
 
-The UI no longer uses `pspDebugScreenPrintf`. It uses a compact PSP GU layer with two 512x272 RGBA framebuffers, VBlank synchronization, a depth-buffer reservation, alpha blending, textured sprites, geometric panels, and a small 5x7 graphical font. The framebuffer pair uses about 1.1 MiB of VRAM; the depth buffer reserves about 0.28 MiB. Cover textures are kept in regular RAM, with four scaled textures requiring at most roughly 360 KiB plus decoder working memory for one PNG row. The first version intentionally avoids transitions and full-library cover preloading.
+The UI no longer uses `pspDebugScreenPrintf`. It uses a compact PSP GU layer with two 512x272 RGBA framebuffers, VBlank synchronization, a depth-buffer reservation, alpha blending, textured sprites, geometric panels, and a small 5x7 graphical font. The framebuffer pair uses about 1.1 MiB of VRAM; the depth buffer reserves about 0.28 MiB. Cover textures are kept in regular RAM, with eight scaled textures requiring at most roughly 720 KiB plus decoder working memory for one PNG row. GU command lists are 1 MiB each, vertices are allocated from the active list, and texture buffers are 16-byte aligned before cache writeback. The first version intentionally avoids transitions and full-library cover preloading.
 
 The font currently renders ASCII directly and maps other UTF-8 sequences to a safe fallback glyph. The data model already supports UTF-8 bytes in titles; a full Cyrillic glyph set can be added later without changing storage.
 

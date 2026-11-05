@@ -1,6 +1,7 @@
 #include "psplibrary/image.h"
 
 #include <png.h>
+#include <malloc.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -109,7 +110,11 @@ static int load_png(const char *path, pspl_image_entry_t *entry)
     }
     texture_width = next_power_of_two(target_width);
     texture_height = next_power_of_two(target_height);
-    pixels = (unsigned char *)calloc((size_t)texture_width * texture_height, 4);
+    {
+        size_t pixel_bytes = (size_t)texture_width * (size_t)texture_height * 4U;
+        pixels = (unsigned char *)memalign(16, pixel_bytes);
+        if (pixels != NULL) memset(pixels, 0, pixel_bytes);
+    }
     row = (unsigned char *)malloc((size_t)rowbytes);
     if (pixels == NULL || row == NULL) goto fail;
     for (y = 0; y < height; ++y) {
@@ -172,7 +177,7 @@ static pspl_image_entry_t *cache_entry(pspl_image_cache_t *cache, const char *pa
 {
     size_t i;
     size_t free_index = cache->capacity;
-    size_t oldest_index = 0;
+    size_t oldest_index = cache->capacity;
     unsigned int oldest = (unsigned int)-1;
     char resolved[PSPL_IMAGE_PATH_LEN];
     resolve_path(path, resolved);
@@ -183,17 +188,27 @@ static pspl_image_entry_t *cache_entry(pspl_image_cache_t *cache, const char *pa
             return &cache->entries[i];
         }
         if (cache->entries[i].path[0] == '\0' && free_index == cache->capacity) free_index = i;
-        if (cache->entries[i].last_used < oldest) {
+        /* A texture used by this frame is still referenced by the GU list. */
+        if (cache->entries[i].path[0] != '\0' &&
+            cache->entries[i].last_used != cache->frame &&
+            cache->entries[i].last_used < oldest) {
             oldest = cache->entries[i].last_used;
             oldest_index = i;
         }
     }
-    i = free_index != cache->capacity ? free_index : oldest_index;
+    if (free_index != cache->capacity) {
+        i = free_index;
+    } else if (oldest_index != cache->capacity) {
+        i = oldest_index;
+    } else {
+        /* The caller can draw a placeholder without invalidating the frame. */
+        return NULL;
+    }
+    if (cache->entries[i].path[0] == '\0') ++cache->count;
     free(cache->entries[i].pixels);
     memset(&cache->entries[i], 0, sizeof(cache->entries[i]));
     snprintf(cache->entries[i].path, sizeof(cache->entries[i].path), "%s", resolved);
     cache->entries[i].last_used = cache->frame;
-    cache->count++;
     if (load_png(resolved, &cache->entries[i]) != 0) cache->entries[i].failed = 1;
     return &cache->entries[i];
 }

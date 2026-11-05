@@ -90,6 +90,60 @@ static void test_navigation(void)
     pspl_library_free(&library);
 }
 
+static void test_navigation_repeated_transitions(void)
+{
+    pspl_library_t library;
+    pspl_navigation_t navigation;
+    size_t indices[16];
+    size_t selected = 0;
+    size_t round;
+    int count;
+
+    pspl_library_init(&library);
+    for (round = 0; round < 12; ++round) {
+        pspl_game_t game;
+        char title[PSPL_TITLE_LEN];
+        char key[PSPL_CONTENT_KEY_LEN];
+        pspl_platform_t platform = (pspl_platform_t)(PSPL_PLATFORM_PSP + (round % 8));
+        snprintf(title, sizeof(title), "Navigation Game %02lu", (unsigned long)round);
+        snprintf(key, sizeof(key), "navigation-%02lu", (unsigned long)round);
+        make_game(&game, platform, title, key);
+        assert(pspl_library_add_game(&library, &game) == 0);
+    }
+
+    pspl_navigation_init(&navigation);
+    for (round = 0; round < 96; ++round) {
+        pspl_platform_t filter = (pspl_platform_t)(round % (PSPL_PLATFORM_OTHER + 1));
+        pspl_sort_t sort = (pspl_sort_t)(round % 3);
+        size_t i;
+        count = pspl_library_filter_sort(&library, filter, sort, indices,
+                                         sizeof(indices) / sizeof(indices[0]));
+        assert(count >= 0 && count <= (int)(sizeof(indices) / sizeof(indices[0])));
+        for (i = 0; i < (size_t)count; ++i) assert(indices[i] < library.game_count);
+        selected = (size_t)(round * 7U);
+        pspl_navigation_restore(&navigation, filter, &library, indices,
+                                (size_t)count, &selected);
+        if (count == 0) {
+            assert(selected == 0);
+        } else {
+            assert(selected < (size_t)count);
+            pspl_navigation_remember(&navigation, filter, &library, indices,
+                                     (size_t)count, (selected + 1U) % (size_t)count);
+        }
+    }
+
+    {
+        size_t invalid_indices[1] = { 9999U };
+        selected = 42;
+        pspl_navigation_remember(&navigation, PSPL_PLATFORM_ALL, &library,
+                                 invalid_indices, 1, 0);
+        pspl_navigation_restore(&navigation, PSPL_PLATFORM_ALL, &library,
+                                invalid_indices, 1, &selected);
+        assert(selected == 0);
+    }
+    pspl_library_free(&library);
+}
+
 static void test_events(void)
 {
     pspl_library_t library;
@@ -480,6 +534,7 @@ int main(void)
 {
     test_ids_and_sorting();
     test_navigation();
+    test_navigation_repeated_transitions();
     test_events();
     test_storage();
     test_psp_tracker_adapter();
