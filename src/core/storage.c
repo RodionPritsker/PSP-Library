@@ -105,15 +105,17 @@ int pspl_storage_save(const char *path, const pspl_library_t *library)
         char title[PSPL_TITLE_LEN * 2];
         char platform[PSPL_PLATFORM_LEN * 2];
         char content_key[PSPL_CONTENT_KEY_LEN * 2];
+        char version[PSPL_VERSION_LEN * 2];
         char cover_path[PSPL_COVER_PATH_LEN * 2];
         if (encode_field(game->id, id, sizeof(id)) != 0 ||
             encode_field(game->title, title, sizeof(title)) != 0 ||
             encode_field(game->platform, platform, sizeof(platform)) != 0 ||
             encode_field(game->content_key, content_key, sizeof(content_key)) != 0 ||
+            encode_field(game->version, version, sizeof(version)) != 0 ||
             encode_field(game->cover_path, cover_path, sizeof(cover_path)) != 0) return -2;
         if (append_line(buffer, sizeof(buffer), &used,
-                        "G|%s|%s|%s|%s|%lu|%lu|%lu|%lu|%u|%s\n",
-                        id, title, platform, content_key,
+                        "G|%s|%s|%s|%s|%s|%lu|%lu|%lu|%lu|%u|%s\n",
+                        id, title, platform, content_key, version,
                         (unsigned long)game->total_seconds, (unsigned long)game->session_count,
                         (unsigned long)game->first_started_at, (unsigned long)game->last_started_at,
                         (unsigned int)game->file_present, cover_path) != 0) return -2;
@@ -189,6 +191,77 @@ static int parse_unsigned(const char *text, uint32_t *value)
     return 0;
 }
 
+typedef struct {
+    char old_id[PSPL_ID_LEN];
+    char new_id[PSPL_ID_LEN];
+} legacy_id_map_t;
+
+static pspl_game_t *find_identity(pspl_library_t *library, const char *platform,
+                                  const char *content_key)
+{
+    size_t i;
+    for (i = 0; i < library->game_count; ++i) {
+        if (strcmp(library->games[i].platform, platform) == 0 &&
+            strcmp(library->games[i].content_key, content_key) == 0) {
+            return &library->games[i];
+        }
+    }
+    return NULL;
+}
+
+static void merge_game(pspl_game_t *destination, const pspl_game_t *source)
+{
+    if (source->total_seconds > UINT32_MAX - destination->total_seconds)
+        destination->total_seconds = UINT32_MAX;
+    else
+        destination->total_seconds += source->total_seconds;
+    if (source->session_count > UINT32_MAX - destination->session_count)
+        destination->session_count = UINT32_MAX;
+    else
+        destination->session_count += source->session_count;
+    if (destination->first_started_at == 0 ||
+        (source->first_started_at != 0 && source->first_started_at < destination->first_started_at))
+        destination->first_started_at = source->first_started_at;
+    if (source->last_started_at > destination->last_started_at) {
+        destination->last_started_at = source->last_started_at;
+        if (source->version[0] != '\0')
+            snprintf(destination->version, sizeof(destination->version), "%s", source->version);
+    }
+    if (source->file_present) destination->file_present = 1;
+    if (destination->cover_path[0] == '\0' && source->cover_path[0] != '\0')
+        snprintf(destination->cover_path, sizeof(destination->cover_path), "%s", source->cover_path);
+    if (destination->version[0] == '\0' && source->version[0] != '\0')
+        snprintf(destination->version, sizeof(destination->version), "%s", source->version);
+}
+
+static void migrate_v1_identity(pspl_game_t *game)
+{
+    const char *body;
+    const char *separator;
+    char stable_key[PSPL_CONTENT_KEY_LEN];
+    if (strcmp(game->platform, "PSP") != 0 || strncmp(game->content_key, "PSP:", 4) != 0)
+        return;
+    body = game->content_key + 4;
+    separator = strchr(body, ':');
+    /* Old tracker keys were PSP:<content-id>:<version>. Only migrate keys
+       whose first component looks like a region-aware PSP content id. */
+    if (separator == NULL || strchr(body, '-') == NULL || separator[1] == '\0') return;
+    if ((size_t)(separator - game->content_key) >= sizeof(stable_key)) return;
+    memcpy(stable_key, game->content_key, (size_t)(separator - game->content_key));
+    stable_key[separator - game->content_key] = '\0';
+    snprintf(game->version, sizeof(game->version), "%s", separator + 1);
+    snprintf(game->content_key, sizeof(game->content_key), "%s", stable_key);
+}
+
+static const char *mapped_id(const legacy_id_map_t *maps, size_t count, const char *old_id)
+{
+    size_t i;
+    for (i = 0; i < count; ++i) {
+        if (strcmp(maps[i].old_id, old_id) == 0) return maps[i].new_id;
+    }
+    return old_id;
+}
+
 int pspl_storage_load(const char *path, pspl_library_t *library)
 {
     FILE *file;
@@ -220,13 +293,22 @@ int pspl_storage_load(const char *path, pspl_library_t *library)
 
     pspl_library_init(library);
     line = strtok((char *)buffer, "\n");
-    if (line == NULL || strncmp(line, "PSPLIB 1", 8) != 0) return -6;
+    if (line == NULL) return -6;
+    {
+        int db_version;
+        legacy_id_map_t maps[PSPL_MAX_GAMES];
+        size_t map_count = 0;
+        if (strcmp(line, "PSPLIB 1") == 0) db_version = 1;
+        else if (strcmp(line, "PSPLIB 2") == 0) db_version = 2;
+        else return -6;
     line = strtok(NULL, "\n");
     if (line == NULL || strncmp(line, "GAMES ", 6) != 0 ||
         parse_unsigned(line + 6, &expected_games) != 0 || expected_games > PSPL_MAX_GAMES) return -6;
     line = strtok(NULL, "\n");
     while (line != NULL && strncmp(line, "SESSIONS ", 9) != 0 && loaded_games < expected_games) {
         pspl_game_t game;
+        char old_id[PSPL_ID_LEN];
+        char canonical_id[PSPL_ID_LEN];
         char *field;
         uint32_t number;
         if (line[0] != 'G' || line[1] != '|') return -6;
@@ -236,13 +318,33 @@ int pspl_storage_load(const char *path, pspl_library_t *library)
         field = next_field(&cursor); if (field == NULL) return -6; decode_field(field); strncpy(game.title, field, sizeof(game.title) - 1);
         field = next_field(&cursor); if (field == NULL) return -6; decode_field(field); strncpy(game.platform, field, sizeof(game.platform) - 1);
         field = next_field(&cursor); if (field == NULL) return -6; decode_field(field); strncpy(game.content_key, field, sizeof(game.content_key) - 1);
+        if (db_version >= 2) {
+            field = next_field(&cursor); if (field == NULL) return -6; decode_field(field); strncpy(game.version, field, sizeof(game.version) - 1);
+        }
         field = next_field(&cursor); if (parse_unsigned(field, &number) != 0) return -6; game.total_seconds = number;
         field = next_field(&cursor); if (parse_unsigned(field, &number) != 0) return -6; game.session_count = number;
         field = next_field(&cursor); if (parse_unsigned(field, &number) != 0) return -6; game.first_started_at = number;
         field = next_field(&cursor); if (parse_unsigned(field, &number) != 0) return -6; game.last_started_at = number;
         field = next_field(&cursor); if (parse_unsigned(field, &number) != 0) return -6; game.file_present = (uint8_t)number;
         field = next_field(&cursor); if (field == NULL || cursor != NULL) return -6; decode_field(field); strncpy(game.cover_path, field, sizeof(game.cover_path) - 1);
-        if (pspl_library_add_game(library, &game) != 0) return -7;
+        snprintf(old_id, sizeof(old_id), "%s", game.id);
+        if (db_version == 1) migrate_v1_identity(&game);
+        if (pspl_make_game_id(pspl_platform_from_name(game.platform), game.content_key, canonical_id) != 0) return -7;
+        snprintf(game.id, sizeof(game.id), "%s", canonical_id);
+        {
+            pspl_game_t *existing = find_identity(library, game.platform, game.content_key);
+            if (existing != NULL) {
+                merge_game(existing, &game);
+                snprintf(canonical_id, sizeof(canonical_id), "%s", existing->id);
+            } else if (pspl_library_add_game(library, &game) != 0) {
+                return -7;
+            }
+        }
+        if (map_count < PSPL_MAX_GAMES) {
+            snprintf(maps[map_count].old_id, sizeof(maps[map_count].old_id), "%s", old_id);
+            snprintf(maps[map_count].new_id, sizeof(maps[map_count].new_id), "%s", canonical_id);
+            ++map_count;
+        }
         ++loaded_games;
         line = strtok(NULL, "\n");
     }
@@ -260,10 +362,12 @@ int pspl_storage_load(const char *path, pspl_library_t *library)
         field = next_field(&cursor); if (parse_unsigned(field, &number) != 0) return -6; session.started_at = number;
         field = next_field(&cursor); if (parse_unsigned(field, &number) != 0) return -6; session.ended_at = number;
         field = next_field(&cursor); if (parse_unsigned(field, &number) != 0 || cursor != NULL) return -6; session.duration_seconds = number;
+        snprintf(session.game_id, sizeof(session.game_id), "%s", mapped_id(maps, map_count, session.game_id));
         if (pspl_library_find_game_const(library, session.game_id) == NULL) return -8;
         library->sessions[library->session_count++] = session;
         ++loaded_sessions;
         line = strtok(NULL, "\n");
     }
     return loaded_sessions == expected_sessions && line == NULL ? 0 : -6;
+    }
 }

@@ -74,6 +74,7 @@ int pspl_library_add_game(pspl_library_t *library, const pspl_game_t *game)
     library->games[library->game_count].title[PSPL_TITLE_LEN - 1] = '\0';
     library->games[library->game_count].platform[PSPL_PLATFORM_LEN - 1] = '\0';
     library->games[library->game_count].content_key[PSPL_CONTENT_KEY_LEN - 1] = '\0';
+    library->games[library->game_count].version[PSPL_VERSION_LEN - 1] = '\0';
     library->games[library->game_count].cover_path[PSPL_COVER_PATH_LEN - 1] = '\0';
     library->game_count++;
     return 0;

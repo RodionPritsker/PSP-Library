@@ -2,7 +2,7 @@
 
 PSP Library is an offline game-activity library for PSP and PPSSPP. Version 0.1 contains a portable C core, a text-based PSP UI suitable for the 480x272 screen, a versioned local database, demo data, and host-side tests.
 
-The project intentionally does **not** launch games and does not include the future PRX tracker, `sceIoOpen` interception, network features, cover downloading, or emulator modifications.
+The project intentionally does **not** launch games and does not include the future system PRX, `sceIoOpen` interception, network features, cover downloading, or emulator modifications.
 
 ## Project structure
 
@@ -12,6 +12,7 @@ include/psplibrary/
   storage.h          Versioned database format and atomic save/load
   demo.h             Isolated demonstration database
   ui.h               PSP UI entry point
+  tracker.h          Launch descriptor and PSP tracker adapter API
 src/core/
   core.c             Platform-independent library and session logic
   storage.c          Portable text database implementation
@@ -19,8 +20,11 @@ src/core/
 src/psp/
   main.c             PSP module and input loop
   ui.c               PSP Library screens and controller navigation
+src/tracker/
+  psp_tracker.c      PSP identity/session adapter
+  psp_fs.c           PSP/host file-presence abstraction
 tests/
-  test_core.c        Host-side core and storage tests
+  test_core.c        Host-side core, storage, and tracker tests
 CMakeLists.txt       PSPDEV CMake build to EBOOT.PBP
 Makefile             Direct PSPSDK build to EBOOT.PBP
 tests/Makefile       Host test build
@@ -142,9 +146,11 @@ The PSP UI uses `pspDebugScreen` so it remains small, fast, and easy to build wi
 
 ## Architecture and limitations
 
-The core only knows about a canonical game identity (`platform + content key`), not about a particular emulator. An adapter can therefore report the same content key from different emulators and merge its statistics, while including region/version/revision in the content key keeps distinct releases separate.
+The core only knows about a canonical game identity (`platform + stable content key`), not about a particular emulator. An adapter can therefore report the same content key from different emulators and merge its statistics, while region/release identity stays in the content key and executable version is stored separately as metadata.
 
-The database is a line-oriented versioned format with a CRC32 checksum. Saves are written to a temporary file and then renamed, with the previous file retained as `.bak`. Reserved field characters are escaped, which keeps content keys such as `title|region|version` intact. The application validates the primary file and falls back to `.bak` when the primary file is missing or invalid. This is best-effort crash recovery, not a claim that every PSP filesystem interruption is transactionally atomic; the workflow includes corruption and backup-recovery tests.
+The first PSP tracker adapter now accepts a launch descriptor (`content_id`, optional version, title, path, and timestamp), creates the game record when needed, emits start/switch/stop events, and preserves the canonical identity across path changes. The region-aware `content_id` is the stable identity input; executable version is stored as metadata and does not create a new record. A missing `content_id` is rejected instead of using a path as an unsafe identity fallback. On PSP, `pspl_psp_path_present()` uses `sceIoGetstat`; host tests use standard C file I/O. A future observer must feed descriptors into this API. The adapter is not a system PRX and does not hook `sceIoOpen`.
+
+The database is a line-oriented versioned format with a CRC32 checksum. Version 2 stores the stable content key and executable version separately. Version 1 files are still loadable: known legacy PSP keys are migrated to a version-independent identity, duplicate versions are merged, and session IDs are remapped. Saves are written to a temporary file and then renamed, with the previous file retained as `.bak`. Reserved field characters are escaped, which keeps content keys intact. The application validates the primary file and falls back to `.bak` when the primary file is missing or invalid. This is best-effort crash recovery, not a claim that every PSP filesystem interruption is transactionally atomic; the workflow includes corruption and backup-recovery tests.
 
 The current build has not been tested on physical PSP hardware or PPSSPP in this workspace. The GitHub Actions build is the reproducible path to a real EBOOT when the workflow is run. PSPDEV documents `psp-cmake ..` followed by `make` as the normal build flow and documents the official Docker image for Windows/other hosts.
 

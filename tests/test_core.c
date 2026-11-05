@@ -1,5 +1,6 @@
 #include "psplibrary/core.h"
 #include "psplibrary/storage.h"
+#include "psplibrary/tracker.h"
 
 #include <assert.h>
 #include <stdio.h>
@@ -112,10 +113,53 @@ static void copy_prefix(const char *source_path, const char *destination_path, s
     assert(fclose(destination) == 0);
 }
 
+static uint32_t test_crc32(const unsigned char *data, size_t length)
+{
+    uint32_t crc = 0xFFFFFFFFU;
+    size_t i;
+    int bit;
+    for (i = 0; i < length; ++i) {
+        crc ^= data[i];
+        for (bit = 0; bit < 8; ++bit)
+            crc = (crc >> 1) ^ (0xEDB88320U & (uint32_t)-(int)(crc & 1U));
+    }
+    return ~crc;
+}
+
+static void write_legacy_v1_database(const char *path)
+{
+    char old_id_1[PSPL_ID_LEN];
+    char old_id_2[PSPL_ID_LEN];
+    char payload[4096];
+    size_t used;
+    int written;
+    FILE *file;
+    assert(pspl_make_game_id(PSPL_PLATFORM_PSP, "PSP:ULUS-10509:1.00", old_id_1) == 0);
+    assert(pspl_make_game_id(PSPL_PLATFORM_PSP, "PSP:ULUS-10509:1.01", old_id_2) == 0);
+    written = snprintf(payload, sizeof(payload),
+                       "PSPLIB 1\nGAMES 2\n"
+                       "G|%s|Peace Walker|PSP|PSP:ULUS-10509:1.00|60|1|100|100|1|\n"
+                       "G|%s|Peace Walker|PSP|PSP:ULUS-10509:1.01|90|1|200|200|0|\n"
+                       "SESSIONS 2\n"
+                       "S|%s|100|160|60\n"
+                       "S|%s|200|290|90\n",
+                       old_id_1, old_id_2, old_id_1, old_id_2);
+    assert(written > 0 && (size_t)written < sizeof(payload));
+    used = (size_t)written;
+    written = snprintf(payload + used, sizeof(payload) - used, "CHECKSUM %08lX\n",
+                       (unsigned long)test_crc32((const unsigned char *)payload, used));
+    assert(written > 0 && (size_t)written < sizeof(payload) - used);
+    file = fopen(path, "wb");
+    assert(file != NULL);
+    assert(fwrite(payload, 1, used + (size_t)written, file) == used + (size_t)written);
+    assert(fclose(file) == 0);
+}
+
 static void test_storage(void)
 {
     const char *path = "test_storage.db";
     const char *partial_path = "test_storage.partial.db";
+    const char *legacy_path = "test_storage_v1.db";
     pspl_library_t original;
     pspl_library_t loaded;
     pspl_library_t recovered;
@@ -123,8 +167,10 @@ static void test_storage(void)
     remove(path);
     remove("test_storage.db.bak");
     remove(partial_path);
+    remove(legacy_path);
     pspl_library_init(&original);
     make_game(&game, PSPL_PLATFORM_PS1, "Metal Gear Solid", "mgs|US|1.0");
+    strcpy(game.version, "1.00");
     game.file_present = 1;
     strcpy(game.cover_path, "covers/mgs.png");
     assert(pspl_library_add_game(&original, &game) == 0);
@@ -143,6 +189,7 @@ static void test_storage(void)
     assert(loaded.games[0].total_seconds == 1294);
     assert(loaded.games[0].session_count == 1 && loaded.session_count == 1);
     assert(strcmp(loaded.games[0].content_key, "mgs|US|1.0") == 0);
+    assert(strcmp(loaded.games[0].version, "1.00") == 0);
     assert(strcmp(loaded.games[0].cover_path, "covers/mgs.png") == 0);
 
     assert(pspl_storage_save(path, &loaded) == 0);
@@ -159,9 +206,102 @@ static void test_storage(void)
     assert(pspl_storage_load(path, &loaded) == 0);
     assert(loaded.game_count == 1 && loaded.games[0].file_present == 0);
     assert(loaded.session_count == 1 && loaded.games[0].session_count == 1);
+
+    write_legacy_v1_database(legacy_path);
+    assert(pspl_storage_load(legacy_path, &loaded) == 0);
+    assert(loaded.game_count == 1 && loaded.session_count == 2);
+    assert(strcmp(loaded.games[0].content_key, "PSP:ULUS-10509") == 0);
+    assert(strcmp(loaded.games[0].version, "1.01") == 0);
+    assert(loaded.games[0].total_seconds == 150 && loaded.games[0].session_count == 2);
+    assert(strcmp(loaded.sessions[0].game_id, loaded.games[0].id) == 0);
+    assert(strcmp(loaded.sessions[1].game_id, loaded.games[0].id) == 0);
+    assert(pspl_storage_save(path, &loaded) == 0);
+    assert(pspl_storage_load(path, &recovered) == 0);
+    assert(recovered.game_count == 1 && recovered.session_count == 2);
+    assert(strcmp(recovered.games[0].version, "1.01") == 0);
     remove(path);
     remove("test_storage.db.bak");
     remove(partial_path);
+    remove(legacy_path);
+}
+
+static void test_psp_tracker_adapter(void)
+{
+    const char *source_path = "tracker-source.bin";
+    pspl_library_t library;
+    pspl_tracker_t tracker;
+    pspl_psp_launch_info_t info;
+    char first_id[PSPL_ID_LEN];
+    char second_id[PSPL_ID_LEN];
+    FILE *source;
+
+    remove(source_path);
+    source = fopen(source_path, "wb");
+    assert(source != NULL);
+    assert(fputc('P', source) != EOF);
+    assert(fclose(source) == 0);
+    assert(pspl_psp_path_present(source_path) == 1);
+
+    pspl_library_init(&library);
+    pspl_tracker_init(&tracker, &library);
+    info.title = "Metal Gear Solid: Peace Walker";
+    info.content_id = "ULUS-10509";
+    info.version = "1.00";
+    info.path = "ms0:/PSP/GAME/ULUS10509/EBOOT.PBP";
+    info.cover_path = "covers/mgs-pw.png";
+    info.file_present = pspl_psp_path_present(source_path);
+    info.timestamp = 100;
+    assert(pspl_psp_tracker_start(&tracker, &info, first_id) == 0);
+    assert(library.game_count == 1 && library.games[0].file_present == 1);
+    info.timestamp = 150;
+    assert(pspl_psp_tracker_start(&tracker, &info, second_id) == 0);
+    assert(strcmp(first_id, second_id) == 0 && library.game_count == 1);
+    assert(pspl_psp_tracker_stop(&tracker, 200) == 0);
+    assert(library.games[0].total_seconds == 100 && library.games[0].session_count == 1);
+
+    remove(source_path);
+    info.file_present = pspl_psp_path_present(source_path);
+    info.timestamp = 300;
+    assert(pspl_psp_tracker_start(&tracker, &info, second_id) == 0);
+    assert(library.games[0].file_present == 0);
+    assert(pspl_psp_tracker_stop(&tracker, 350) == 0);
+    assert(library.games[0].session_count == 2);
+
+    info.version = "1.01";
+    info.title = "Metal Gear Solid: Peace Walker (revision)";
+    info.path = "ms0:/PSP/GAME/OTHER10509/EBOOT.PBP";
+    info.timestamp = 400;
+    assert(pspl_psp_tracker_start(&tracker, &info, second_id) == 0);
+    assert(library.game_count == 1 && strcmp(first_id, second_id) == 0);
+    assert(strcmp(library.games[0].version, "1.01") == 0);
+    info.timestamp = 450;
+    assert(pspl_psp_tracker_start(&tracker, &info, second_id) == 0);
+    assert(library.game_count == 1);
+    assert(pspl_psp_tracker_stop(&tracker, 500) == 0);
+    assert(library.games[0].total_seconds == 250 && library.games[0].session_count == 3);
+
+    info.content_id = "ULES-10509";
+    info.version = "1.00";
+    info.timestamp = 600;
+    assert(pspl_psp_tracker_start(&tracker, &info, second_id) == 0);
+    assert(library.game_count == 2 && strcmp(first_id, second_id) != 0);
+    info.timestamp = 650;
+    assert(pspl_psp_tracker_start(&tracker, &info, second_id) == 0);
+    assert(pspl_psp_tracker_stop(&tracker, 700) == 0);
+    assert(library.games[1].total_seconds == 100 && library.games[1].session_count == 1);
+
+    info.content_id = "ULUS-10509";
+    info.version = "1.00";
+    info.timestamp = 800;
+    assert(pspl_psp_tracker_start(&tracker, &info, second_id) == 0);
+    info.content_id = "ULES-10509";
+    info.timestamp = 850;
+    assert(pspl_psp_tracker_start(&tracker, &info, second_id) == 0);
+    assert(pspl_psp_tracker_stop(&tracker, 900) == 0);
+    assert(library.games[0].total_seconds == 300 && library.games[0].session_count == 4);
+    assert(library.games[1].total_seconds == 150 && library.games[1].session_count == 2);
+
+    remove(source_path);
 }
 
 int main(void)
@@ -169,6 +309,7 @@ int main(void)
     test_ids_and_sorting();
     test_events();
     test_storage();
+    test_psp_tracker_adapter();
     puts("PSP Library core tests: OK");
     return 0;
 }

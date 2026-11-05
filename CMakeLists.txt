@@ -8,6 +8,8 @@ add_executable(${PROJECT_NAME}
     src/core/core.c
     src/core/storage.c
     src/core/demo.c
+    src/tracker/psp_tracker.c
+    src/tracker/psp_fs.c
 )
 
 target_include_directories(${PROJECT_NAME} PRIVATE include)

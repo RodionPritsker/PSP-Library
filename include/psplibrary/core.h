@@ -10,6 +10,7 @@
 #define PSPL_TITLE_LEN 64
 #define PSPL_PLATFORM_LEN 16
 #define PSPL_CONTENT_KEY_LEN 96
+#define PSPL_VERSION_LEN 32
 #define PSPL_COVER_PATH_LEN 128
 
 typedef enum {
@@ -42,6 +43,7 @@ typedef struct {
     char title[PSPL_TITLE_LEN];
     char platform[PSPL_PLATFORM_LEN];
     char content_key[PSPL_CONTENT_KEY_LEN];
+    char version[PSPL_VERSION_LEN];
     uint32_t total_seconds;
     uint32_t session_count;
     uint32_t first_started_at;

@@ -3,7 +3,7 @@
 
 #include "core.h"
 
-#define PSPL_DB_VERSION 1
+#define PSPL_DB_VERSION 2
 
 int pspl_storage_exists(const char *path);
 int pspl_storage_load(const char *path, pspl_library_t *library);
