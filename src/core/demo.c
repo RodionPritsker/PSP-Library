@@ -46,13 +46,40 @@ void pspl_demo_populate(pspl_library_t *library, uint32_t now)
 {
     pspl_library_init(library);
     add_demo_game(library, PSPL_PLATFORM_PSP, "Metal Gear Solid: Peace Walker",
-                  "MGS-PW|US|1.00", 75600, now - 86400U * 2U, "covers/mgs-pw.png");
+                  "MGS-PW|US|1.00", 75600, now - 86400U * 2U, "covers/aurora-quest.png");
     add_demo_game(library, PSPL_PLATFORM_PSP, "Persona 3 Portable",
-                  "P3P|US|1.00", 43200, now - 86400U * 6U, "covers/p3p.png");
+                  "P3P|US|1.00", 43200, now - 86400U * 6U, "covers/neon-racers.png");
     add_demo_game(library, PSPL_PLATFORM_GBA, "Pokemon Emerald",
-                  "POKEMON-EMERALD|US|1.0", 28800, now - 86400U * 3U, "covers/pokemon-emerald.png");
+                  "POKEMON-EMERALD|US|1.0", 28800, now - 86400U * 3U, "covers/ember-tactics.png");
     add_demo_game(library, PSPL_PLATFORM_GBA, "Metroid Fusion",
                   "METROID-FUSION|US|1.1", 14400, now - 86400U * 10U, "covers/metroid-fusion.png");
     add_demo_game(library, PSPL_PLATFORM_PS1, "Metal Gear Solid",
                   "MGS|US|DISC1|1.0", 21600, now - 86400U * 14U, "covers/mgs-ps1.png");
+}
+
+void pspl_demo_populate_large(pspl_library_t *library, uint32_t now)
+{
+    static const pspl_platform_t platforms[] = {
+        PSPL_PLATFORM_PSP, PSPL_PLATFORM_PS1, PSPL_PLATFORM_GBA, PSPL_PLATFORM_GB,
+        PSPL_PLATFORM_GBC, PSPL_PLATFORM_NES, PSPL_PLATFORM_SNES, PSPL_PLATFORM_OTHER
+    };
+    static const char *covers[] = {
+        "covers/aurora-quest.png", "covers/neon-racers.png", "covers/ember-tactics.png",
+        "covers/mgs-pw.png", "covers/p3p.png"
+    };
+    size_t i;
+    pspl_library_init(library);
+    for (i = 0; i < 100; ++i) {
+        char title[PSPL_TITLE_LEN];
+        char key[PSPL_CONTENT_KEY_LEN];
+        pspl_platform_t platform = platforms[i % (sizeof(platforms) / sizeof(platforms[0]))];
+        uint32_t seconds = (uint32_t)(900U + (i * 733U) % 72000U);
+        uint32_t last = now - (uint32_t)((i * 3U + 1U) * 86400U);
+        const char *cover = i % 7U == 0U ? covers[i % (sizeof(covers) / sizeof(covers[0]))] : "";
+        snprintf(title, sizeof(title), "%s Archive %02lu", pspl_platform_name(platform),
+                 (unsigned long)(i + 1));
+        snprintf(key, sizeof(key), "DEMO-%s-%02lu|TEST|1.0", pspl_platform_name(platform),
+                 (unsigned long)(i + 1));
+        add_demo_game(library, platform, title, key, seconds, last, cover);
+    }
 }

@@ -5,6 +5,9 @@ project(psplibrary C)
 add_executable(${PROJECT_NAME}
     src/psp/main.c
     src/psp/ui.c
+    src/psp/gfx.c
+    src/psp/text.c
+    src/psp/image.c
     src/core/navigation.c
     src/core/core.c
     src/core/storage.c
@@ -20,6 +23,9 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     pspctrl
     pspdisplay
     pspge
+    pspgu
+    png
+    z
 )
 
 create_pbp_file(
@@ -28,5 +34,5 @@ create_pbp_file(
     BACKGROUND_PATH NULL
     PREVIEW_PATH NULL
     TITLE "PSP Library"
-    VERSION 01.00
+    VERSION 03.00
 )

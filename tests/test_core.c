@@ -2,6 +2,7 @@
 #include "psplibrary/storage.h"
 #include "psplibrary/tracker.h"
 #include "psplibrary/navigation.h"
+#include "psplibrary/demo.h"
 
 #include <assert.h>
 #include <stdio.h>
@@ -456,6 +457,25 @@ static void test_stress_scaling(void)
     }
 }
 
+static void test_large_demo_fixture(void)
+{
+    pspl_library_t library;
+    size_t i;
+    int cover_count = 0;
+    pspl_library_init(&library);
+    pspl_demo_populate_large(&library, 1700000000U);
+    assert(library.game_count == 100);
+    assert(library.session_count == 300);
+    for (i = 0; i < library.game_count; ++i) {
+        if (library.games[i].cover_path[0] != '\0') ++cover_count;
+        assert(library.games[i].session_count == 3);
+        assert(library.games[i].first_started_at > 0);
+        assert(library.games[i].last_started_at > 0);
+    }
+    assert(cover_count > 0 && cover_count < 100);
+    pspl_library_free(&library);
+}
+
 int main(void)
 {
     test_ids_and_sorting();
@@ -464,6 +484,7 @@ int main(void)
     test_storage();
     test_psp_tracker_adapter();
     test_stress_scaling();
+    test_large_demo_fixture();
     puts("PSP Library core tests: OK");
     return 0;
 }

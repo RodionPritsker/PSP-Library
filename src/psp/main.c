@@ -1,5 +1,4 @@
 #include <pspuser.h>
-#include <pspdebug.h>
 #include <pspctrl.h>
 #include <pspiofilemgr.h>
 
@@ -44,17 +43,26 @@ int main(void)
     const char *user_path = "ms0:/PSP/SAVEDATA/PSPLIBRARY/library.db";
     const char *user_backup_path = "ms0:/PSP/SAVEDATA/PSPLIBRARY/library.db.bak";
     const char *demo_path = "ms0:/PSP/SAVEDATA/PSPLIBRARY/demo.db";
+    const char *test100_path = "ms0:/PSP/SAVEDATA/PSPLIBRARY/test100.db";
+    const char *test100_flag = "ms0:/PSP/SAVEDATA/PSPLIBRARY/test100.flag";
     int demo_mode = 0;
 
     callback_setup();
-    pspDebugScreenInit();
     sceCtrlSetSamplingCycle(0);
     sceCtrlSetSamplingMode(PSP_CTRL_MODE_DIGITAL);
     sceIoMkdir("ms0:/PSP/SAVEDATA", 0777);
     sceIoMkdir("ms0:/PSP/SAVEDATA/PSPLIBRARY", 0777);
 
     pspl_library_init(&g_library);
-    if (pspl_storage_exists(user_path) && pspl_storage_load(user_path, &g_library) == 0) {
+    if (pspl_storage_exists(test100_flag)) {
+        if (pspl_storage_exists(test100_path) && pspl_storage_load(test100_path, &g_library) == 0) {
+            demo_mode = 2;
+        } else {
+            pspl_demo_populate_large(&g_library, pspl_library_now());
+            pspl_storage_save(test100_path, &g_library);
+            demo_mode = 2;
+        }
+    } else if (pspl_storage_exists(user_path) && pspl_storage_load(user_path, &g_library) == 0) {
         demo_mode = 0;
     } else if (pspl_storage_exists(user_backup_path) && pspl_storage_load(user_backup_path, &g_library) == 0) {
         demo_mode = 0;
