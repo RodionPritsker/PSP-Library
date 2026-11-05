@@ -86,7 +86,7 @@ Selection is remembered independently for every platform filter, including when 
 
 `pspl_game_t.cover_path` remains the source of truth and is stored in PSPLIB 2 without a format change. Relative paths are resolved below `ms0:/PSP/GAME/PSPLIBRARY/`; absolute `ms0:/` and `ef0:/` paths are also accepted.
 
-PNG files are decoded only when first needed. The decoder streams source rows and scales into a maximum 128x176 RGBA texture, so large source images do not require a full-size decoded bitmap. Eight cache slots are used with oldest-unused replacement; entries referenced by the current GU frame are pinned until that frame has been synchronized. Missing, corrupt, unsupported, or absent files draw a platform-colored placeholder and never terminate the app. Covers are used in the grid, list, and detail screen and survive EBOOT/database updates because they are independent files.
+PNG files are decoded only when first needed. The decoder streams source rows and scales into a maximum 128x176 RGBA texture, so large source images do not require a full-size decoded bitmap. Decoding happens between synchronized GU frames, one uncached path per loop, so a large cover cannot block or corrupt a partially submitted frame during startup or navigation. Eight cache slots are used with oldest-unused replacement; entries referenced by the current GU frame are pinned until that frame has been synchronized. Missing, corrupt, unsupported, or absent files draw a platform-colored placeholder and never terminate the app. Covers are used in the grid, list, and detail screen and survive EBOOT/database updates because they are independent files.
 
 The included `covers/` files are original project test artwork. No network downloading is performed.
 

@@ -15,6 +15,8 @@ typedef struct {
 int pspl_image_cache_init(pspl_image_cache_t *cache, size_t capacity);
 void pspl_image_cache_free(pspl_image_cache_t *cache);
 void pspl_image_cache_begin_frame(pspl_image_cache_t *cache);
+/* Decode one uncached path; call only between synchronized GU frames. */
+int pspl_image_cache_load_path(pspl_image_cache_t *cache, const char *path);
 void pspl_image_draw(pspl_image_cache_t *cache, const pspl_game_t *game,
                      float x, float y, float width, float height);
 void pspl_image_draw_path(pspl_image_cache_t *cache, const char *path,

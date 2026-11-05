@@ -229,6 +229,23 @@ static void draw_detail(const pspl_library_t *library, const ui_state_t *state,
     pspl_text_draw(74.0f, 258.0f, "SQUARE TEST SESSION", 1, COLOR_MUTED);
 }
 
+static int preload_next_cover(const pspl_library_t *library, const ui_state_t *state,
+                              const size_t *indices, size_t count,
+                              pspl_image_cache_t *images)
+{
+    size_t visible = state->detail ? 1U :
+        (state->grid ? PSPL_GRID_VISIBLE_ITEMS : PSPL_LIST_VISIBLE_ROWS);
+    size_t page_start = count == 0 ? 0 : (state->selected / visible) * visible;
+    size_t page_end = page_start + visible;
+    size_t i;
+    if (page_end > count) page_end = count;
+    for (i = page_start; i < page_end; ++i) {
+        const pspl_game_t *game = &library->games[indices[i]];
+        if (pspl_image_cache_load_path(images, game->cover_path) != 0) return 1;
+    }
+    return 0;
+}
+
 static size_t clamp_selection(size_t selected, int count)
 {
     if (count <= 0) return 0;
@@ -374,6 +391,15 @@ int pspl_ui_run(pspl_library_t *library, const char *database_path, int demo_mod
             }
             pspl_gfx_end(&gfx);
             dirty = 0;
+
+            /*
+             * The GU frame is synchronized now. Decode one uncached cover
+             * while the stable frame remains visible, then redraw it on the
+             * next loop. This prevents large PNGs from blocking a half-built
+             * frame during startup or navigation.
+             */
+            if (preload_next_cover(library, &state, indices, (size_t)count, &images))
+                dirty = 1;
         }
         sceCtrlReadBufferPositive(&pad, 1);
         if ((pad.Buttons & PSP_CTRL_TRIANGLE) && !(previous_buttons & PSP_CTRL_TRIANGLE)) break;

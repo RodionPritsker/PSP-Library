@@ -213,6 +213,30 @@ static pspl_image_entry_t *cache_entry(pspl_image_cache_t *cache, const char *pa
     return &cache->entries[i];
 }
 
+static pspl_image_entry_t *cache_find(pspl_image_cache_t *cache, const char *path)
+{
+    size_t i;
+    char resolved[PSPL_IMAGE_PATH_LEN];
+    if (cache == NULL || path == NULL || path[0] == '\0') return NULL;
+    resolve_path(path, resolved);
+    if (resolved[0] == '\0') return NULL;
+    for (i = 0; i < cache->capacity; ++i) {
+        if (cache->entries[i].path[0] != '\0' &&
+            strcmp(cache->entries[i].path, resolved) == 0) {
+            cache->entries[i].last_used = cache->frame;
+            return &cache->entries[i];
+        }
+    }
+    return NULL;
+}
+
+int pspl_image_cache_load_path(pspl_image_cache_t *cache, const char *path)
+{
+    if (cache == NULL || path == NULL || path[0] == '\0') return 0;
+    if (cache_find(cache, path) != NULL) return 0;
+    return cache_entry(cache, path) != NULL ? 1 : 0;
+}
+
 void pspl_image_draw_path(pspl_image_cache_t *cache, const char *path,
                           float x, float y, float width, float height,
                           const char *fallback_label)
@@ -222,7 +246,8 @@ void pspl_image_draw_path(pspl_image_cache_t *cache, const char *path,
         placeholder(fallback_label, x, y, width, height);
         return;
     }
-    entry = cache_entry(cache, path);
+    /* PNG decoding stays outside the GU command list. */
+    entry = cache_find(cache, path);
     if (entry == NULL || entry->failed || entry->pixels == NULL) {
         placeholder(fallback_label, x, y, width, height);
         return;

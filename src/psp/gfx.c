@@ -6,6 +6,7 @@
 #include <string.h>
 
 #define PSPL_GFX_LIST_WORDS 262144U
+#define PSPL_GFX_CLEAR_COLOR 0xFF0B1118U
 
 /*
  * GU keeps command pointers and the temporary vertex allocations in the
@@ -32,9 +33,48 @@ typedef struct {
     float z;
 } pspl_texture_vertex_t;
 
+static int clear_buffer(unsigned int *list, unsigned int offset)
+{
+    if (sceGuStart(GU_DIRECT, list) < 0) return -1;
+    sceGuDrawBuffer(GU_PSM_8888, (void *)offset, PSPL_GFX_STRIDE);
+    sceGuScissor(0, 0, PSPL_SCREEN_WIDTH, PSPL_SCREEN_HEIGHT);
+    sceGuEnable(GU_SCISSOR_TEST);
+    sceGuClearColor(PSPL_GFX_CLEAR_COLOR);
+    sceGuClear(GU_COLOR_BUFFER_BIT);
+    sceGuFinish();
+    sceGuSync(0, 0);
+    return 0;
+}
+
 static int setup_2d(void)
 {
     if (sceGuStart(GU_DIRECT, g_list[0]) < 0) return -1;
+    sceGuDrawBuffer(GU_PSM_8888, (void *)0, PSPL_GFX_STRIDE);
+    sceGuDispBuffer(PSPL_SCREEN_WIDTH, PSPL_SCREEN_HEIGHT,
+                    (void *)(PSPL_GFX_STRIDE * PSPL_SCREEN_HEIGHT), PSPL_GFX_STRIDE);
+    sceGuDepthBuffer((void *)(PSPL_GFX_STRIDE * PSPL_SCREEN_HEIGHT * 2), PSPL_GFX_STRIDE);
+    sceGuOffset(2048 - PSPL_SCREEN_WIDTH / 2, 2048 - PSPL_SCREEN_HEIGHT / 2);
+    sceGuViewport(2048, 2048, PSPL_SCREEN_WIDTH, PSPL_SCREEN_HEIGHT);
+    sceGuDepthRange(65535, 0);
+    sceGuScissor(0, 0, PSPL_SCREEN_WIDTH, PSPL_SCREEN_HEIGHT);
+    sceGuEnable(GU_SCISSOR_TEST);
+    sceGuDisable(GU_DEPTH_TEST);
+    sceGuDisable(GU_TEXTURE_2D);
+    sceGuShadeModel(GU_SMOOTH);
+    sceGuFinish();
+    sceGuSync(0, 0);
+
+    /*
+     * The first PNG is decoded while the first UI command list is being
+     * built.  Until that list is submitted, the display buffer may still
+     * contain VRAM from a previous run.  Clear both sides of the swap pair
+     * before enabling the display so startup can only show a valid frame.
+     */
+    if (clear_buffer(g_list[1], PSPL_GFX_STRIDE * PSPL_SCREEN_HEIGHT) != 0) return -1;
+    if (clear_buffer(g_list[0], 0) != 0) return -1;
+
+    /* Leave the GU configured to render into the first draw buffer. */
+    if (sceGuStart(GU_DIRECT, g_list[1]) < 0) return -1;
     sceGuDrawBuffer(GU_PSM_8888, (void *)0, PSPL_GFX_STRIDE);
     sceGuDispBuffer(PSPL_SCREEN_WIDTH, PSPL_SCREEN_HEIGHT,
                     (void *)(PSPL_GFX_STRIDE * PSPL_SCREEN_HEIGHT), PSPL_GFX_STRIDE);
