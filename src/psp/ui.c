@@ -85,9 +85,12 @@ static void draw_detail(const pspl_library_t *library, const ui_state_t *state, 
 {
     const pspl_game_t *game;
     char duration[16];
-    if (count <= 0 || state->selected >= (size_t)count) return;
-    game = &library->games[indices[state->selected]];
     clear_screen();
+    if (count <= 0 || state->selected >= (size_t)count) {
+        pspDebugScreenPrintf("No game selected for this filter.\n");
+        return;
+    }
+    game = &library->games[indices[state->selected]];
     pspDebugScreenSetTextColor(0x0068D8FF);
     pspDebugScreenPrintf("GAME DETAILS %s\n\n", demo_mode ? "[DEMO DATA]" : "[USER DATA]");
     pspDebugScreenSetTextColor(0x00E8F0F8);
@@ -162,7 +165,9 @@ int pspl_ui_run(pspl_library_t *library, const char *database_path, int demo_mod
 {
     ui_state_t state;
     size_t indices[PSPL_MAX_GAMES];
+    size_t previous_selected;
     int count;
+    int dirty = 1;
     SceCtrlData pad;
     unsigned int previous = 0;
 
@@ -171,28 +176,64 @@ int pspl_ui_run(pspl_library_t *library, const char *database_path, int demo_mod
     state.filter = PSPL_PLATFORM_ALL;
     for (;;) {
         count = pspl_library_filter_sort(library, state.filter, state.sort, indices, PSPL_MAX_GAMES);
+        previous_selected = state.selected;
         state.selected = clamp_selection(state.selected, count);
-        if (state.detail) draw_detail(library, &state, demo_mode, indices, count);
-        else draw_library(library, &state, demo_mode, indices, count);
+        if (state.selected != previous_selected) dirty = 1;
+        if (dirty) {
+            if (state.detail) draw_detail(library, &state, demo_mode, indices, count);
+            else draw_library(library, &state, demo_mode, indices, count);
+            dirty = 0;
+        }
         sceCtrlReadBufferPositive(&pad, 1);
         if ((pad.Buttons & PSP_CTRL_TRIANGLE) && !(previous & PSP_CTRL_TRIANGLE)) break;
-        if ((pad.Buttons & PSP_CTRL_SELECT) && !(previous & PSP_CTRL_SELECT)) state.grid = !state.grid;
-        if ((pad.Buttons & PSP_CTRL_START) && !(previous & PSP_CTRL_START)) state.sort = (state.sort + 1) % 3;
-        if ((pad.Buttons & PSP_CTRL_LTRIGGER) && !(previous & PSP_CTRL_LTRIGGER)) change_filter(&state, -1);
-        if ((pad.Buttons & PSP_CTRL_RTRIGGER) && !(previous & PSP_CTRL_RTRIGGER)) change_filter(&state, 1);
-        if ((pad.Buttons & PSP_CTRL_CROSS) && !(previous & PSP_CTRL_CROSS)) state.detail = 1;
-        if ((pad.Buttons & PSP_CTRL_CIRCLE) && !(previous & PSP_CTRL_CIRCLE)) state.detail = 0;
+        if ((pad.Buttons & PSP_CTRL_SELECT) && !(previous & PSP_CTRL_SELECT)) {
+            state.grid = !state.grid;
+            dirty = 1;
+        }
+        if ((pad.Buttons & PSP_CTRL_START) && !(previous & PSP_CTRL_START)) {
+            state.sort = (state.sort + 1) % 3;
+            dirty = 1;
+        }
+        if ((pad.Buttons & PSP_CTRL_LTRIGGER) && !(previous & PSP_CTRL_LTRIGGER)) {
+            change_filter(&state, -1);
+            dirty = 1;
+        }
+        if ((pad.Buttons & PSP_CTRL_RTRIGGER) && !(previous & PSP_CTRL_RTRIGGER)) {
+            change_filter(&state, 1);
+            dirty = 1;
+        }
+        if ((pad.Buttons & PSP_CTRL_CROSS) && !(previous & PSP_CTRL_CROSS)) {
+            state.detail = 1;
+            dirty = 1;
+        }
+        if ((pad.Buttons & PSP_CTRL_CIRCLE) && !(previous & PSP_CTRL_CIRCLE)) {
+            state.detail = 0;
+            dirty = 1;
+        }
         if ((pad.Buttons & PSP_CTRL_SQUARE) && !(previous & PSP_CTRL_SQUARE)) {
             generate_test_session(library, indices, count, state.selected);
             if (!demo_mode) pspl_storage_save(database_path, library);
+            dirty = 1;
         }
-        if (!state.detail && (pad.Buttons & PSP_CTRL_UP) && !(previous & PSP_CTRL_UP) && state.selected > 0) --state.selected;
-        if (!state.detail && (pad.Buttons & PSP_CTRL_DOWN) && !(previous & PSP_CTRL_DOWN) && state.selected + 1 < (size_t)count) ++state.selected;
+        if (!state.detail && (pad.Buttons & PSP_CTRL_UP) && !(previous & PSP_CTRL_UP) && state.selected > 0) {
+            --state.selected;
+            dirty = 1;
+        }
+        if (!state.detail && (pad.Buttons & PSP_CTRL_DOWN) && !(previous & PSP_CTRL_DOWN) && state.selected + 1 < (size_t)count) {
+            ++state.selected;
+            dirty = 1;
+        }
         if (!state.detail && (pad.Buttons & PSP_CTRL_LEFT) && !(previous & PSP_CTRL_LEFT)) {
-            if (state.grid && state.selected >= 3) state.selected -= 3;
+            if (state.grid && state.selected >= 3) {
+                state.selected -= 3;
+                dirty = 1;
+            }
         }
         if (!state.detail && (pad.Buttons & PSP_CTRL_RIGHT) && !(previous & PSP_CTRL_RIGHT)) {
-            if (state.grid && state.selected + 3 < (size_t)count) state.selected += 3;
+            if (state.grid && state.selected + 3 < (size_t)count) {
+                state.selected += 3;
+                dirty = 1;
+            }
         }
         previous = pad.Buttons;
         sceKernelDelayThread(50000);
