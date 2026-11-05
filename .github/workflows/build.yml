@@ -1,0 +1,52 @@
+name: PSP Library build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  host-tests:
+    name: Host core tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Build and run C tests
+        run: |
+          make -C tests clean
+          make -C tests CFLAGS="-std=c99 -Wall -Wextra -Werror -pedantic -O2 -I../include"
+          make -C tests run
+
+  psp-build:
+    name: PSPDEV EBOOT build
+    runs-on: ubuntu-latest
+    needs: host-tests
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Build with official PSPDEV container
+        run: |
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE:/source" \
+            -w /source \
+            pspdev/pspdev:latest \
+            sh -lc 'rm -rf build && mkdir build && cd build && psp-cmake .. && make -j2 && test -s EBOOT.PBP'
+
+      - name: Prepare PPSSPP installation ZIP
+        run: |
+          rm -rf package
+          mkdir -p package/PSP/GAME/PSPLIBRARY
+          cp build/EBOOT.PBP package/PSP/GAME/PSPLIBRARY/EBOOT.PBP
+          (cd package && zip -r ../psp-library-ppsspp.zip PSP)
+
+      - name: Upload EBOOT and PPSSPP package
+        uses: actions/upload-artifact@v4
+        with:
+          name: psp-library-v0.1
+          if-no-files-found: error
+          path: |
+            build/EBOOT.PBP
+            psp-library-ppsspp.zip

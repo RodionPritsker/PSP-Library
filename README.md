@@ -1,0 +1,153 @@
+# PSP Library
+
+PSP Library is an offline game-activity library for PSP and PPSSPP. Version 0.1 contains a portable C core, a text-based PSP UI suitable for the 480x272 screen, a versioned local database, demo data, and host-side tests.
+
+The project intentionally does **not** launch games and does not include the future PRX tracker, `sceIoOpen` interception, network features, cover downloading, or emulator modifications.
+
+## Project structure
+
+```text
+include/psplibrary/
+  core.h             Game model, filtering, sorting, and event processing
+  storage.h          Versioned database format and atomic save/load
+  demo.h             Isolated demonstration database
+  ui.h               PSP UI entry point
+src/core/
+  core.c             Platform-independent library and session logic
+  storage.c          Portable text database implementation
+  demo.c             Five demonstration games
+src/psp/
+  main.c             PSP module and input loop
+  ui.c               PSP Library screens and controller navigation
+tests/
+  test_core.c        Host-side core and storage tests
+CMakeLists.txt       PSPDEV CMake build to EBOOT.PBP
+Makefile             Direct PSPSDK build to EBOOT.PBP
+tests/Makefile       Host test build
+.github/workflows/   GitHub Actions host tests and PSPDEV build
+scripts/              Windows PPSSPP ZIP packaging helper
+```
+
+## PSP build
+
+Install the official PSP toolchain from [PSPDEV](https://pspdev.github.io/). On Windows, the supported workflow is WSL2 or the official `pspdev/pspdev` Docker image.
+
+Inside the repository:
+
+```sh
+mkdir build
+cd build
+psp-cmake ..
+make
+```
+
+This creates `build/EBOOT.PBP`. The included root `Makefile` is also available as a direct PSPSDK build:
+
+```sh
+make clean
+make
+```
+
+Using the official Docker image from PowerShell instead:
+
+```powershell
+$projectPath = (Get-Location).Path.Replace('\', '/')
+docker run --rm -v "${projectPath}:/source" -w /source pspdev/pspdev:latest sh -lc "mkdir -p build && cd build && psp-cmake .. && make"
+```
+
+Docker Desktop must be allowed to share the drive containing the project. The PSPDEV documentation also notes that a privileged container may be needed if `gmake` reports `Operation not permitted`.
+
+The result is `EBOOT.PBP`. Copy the project to:
+
+```text
+ms0:/PSP/GAME/PSPLIBRARY/EBOOT.PBP
+```
+
+Then start **PSP Library** from the PSP Game menu, or add the same folder to PPSSPP's memory-stick directory and start it from the PSP menu.
+
+The application stores its user database at:
+
+```text
+ms0:/PSP/SAVEDATA/PSPLIBRARY/library.db
+```
+
+The demonstration database is kept separately at `demo.db`. If no user database exists, the UI opens the demo database in read-only demo mode. The demo records are never silently saved over the user database.
+
+## Host tests
+
+With a C99 compiler available:
+
+```sh
+cd tests
+make
+make run
+```
+
+Or directly:
+
+```sh
+cc -std=c99 -Wall -Wextra -pedantic -I../include \
+  ../src/core/core.c ../src/core/storage.c test_core.c \
+  -o test_core
+./test_core
+```
+
+The tests cover deterministic identifiers, filtering/sorting, repeated start/stop and switched sessions, time/session totals, save/load round trips, delimiter escaping, corrupted and incomplete files, backup recovery, and persistence of records when `file_present` becomes false.
+
+The GitHub Actions workflow runs these host tests on Ubuntu and then builds the PSP target in the official `pspdev/pspdev:latest` container. A successful run publishes both `EBOOT.PBP` and an installation ZIP as workflow artifacts.
+
+## GitHub Actions from Windows
+
+This workspace currently has no `.git` directory and no remote repository was created. To connect it to a repository you create yourself:
+
+```powershell
+git init
+git add .
+git commit -m "Initial PSP Library v0.1"
+git branch -M main
+git remote add origin https://github.com/<your-user>/<your-repository>.git
+git push -u origin main
+```
+
+Open the repository's **Actions** tab and select **PSP Library build**. It runs automatically on pushes and pull requests, or can be started with **Run workflow**. After a successful run, download the `psp-library-v0.1` artifact; it contains both the raw `EBOOT.PBP` and `psp-library-ppsspp.zip`.
+
+## Windows PPSSPP package
+
+After obtaining `build/EBOOT.PBP`, run from PowerShell:
+
+```powershell
+.\scripts\package_ppsspp.ps1
+```
+
+This creates `psp-library-ppsspp.zip` with the exact structure:
+
+```text
+PSP/GAME/PSPLIBRARY/EBOOT.PBP
+```
+
+Extract the ZIP into the PPSSPP memory-stick directory, preserving the `PSP` folder, or copy `EBOOT.PBP` directly to the corresponding `PSP\GAME\PSPLIBRARY` folder. Then launch it from the PSP Game menu.
+
+## Controls
+
+* D-pad: move through the library
+* X: open the selected game's details
+* Circle: return from details / clear platform filter
+* L/R: previous/next platform filter
+* Select: switch grid/list view
+* Start: cycle sort mode
+* Square: generate a short synthetic session for the selected game
+* Triangle: exit
+
+The PSP UI uses `pspDebugScreen` so it remains small, fast, and easy to build with a stock PSPSDK. Grid view uses cover placeholders and paths; it deliberately does not decode every cover into memory.
+
+## Architecture and limitations
+
+The core only knows about a canonical game identity (`platform + content key`), not about a particular emulator. An adapter can therefore report the same content key from different emulators and merge its statistics, while including region/version/revision in the content key keeps distinct releases separate.
+
+The database is a line-oriented versioned format with a CRC32 checksum. Saves are written to a temporary file and then renamed, with the previous file retained as `.bak`. Reserved field characters are escaped, which keeps content keys such as `title|region|version` intact. The application validates the primary file and falls back to `.bak` when the primary file is missing or invalid. This is best-effort crash recovery, not a claim that every PSP filesystem interruption is transactionally atomic; the workflow includes corruption and backup-recovery tests.
+
+The current build has not been tested on physical PSP hardware or PPSSPP in this workspace. The GitHub Actions build is the reproducible path to a real EBOOT when the workflow is run. PSPDEV documents `psp-cmake ..` followed by `make` as the normal build flow and documents the official Docker image for Windows/other hosts.
+
+## Next small step
+
+Implement one real tracker adapter, starting with a PSP game-launch/session source that reports canonical identities to `pspl_library_handle_event()`. Keep it behind the existing Tracking API so the UI and storage remain unchanged.

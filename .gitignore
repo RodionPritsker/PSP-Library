@@ -1,0 +1,11 @@
+EBOOT.PBP
+*.o
+*.prx
+tests/test_core
+tests/test_core.exe
+tests/test_storage.db*
+*.bak
+*.tmp
+build/
+.ppsspp-staging/
+psp-library-ppsspp.zip
