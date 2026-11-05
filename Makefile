@@ -1,5 +1,5 @@
 TARGET = psplibrary
-OBJS = src/psp/main.o src/psp/ui.o src/core/core.o src/core/storage.o src/core/demo.o src/tracker/psp_tracker.o src/tracker/psp_fs.o
+OBJS = src/psp/main.o src/psp/ui.o src/core/navigation.o src/core/core.o src/core/storage.o src/core/demo.o src/tracker/psp_tracker.o src/tracker/psp_fs.o
 
 PSPSDK := $(shell psp-config --pspsdk-path)
 BUILD_PRX = 1

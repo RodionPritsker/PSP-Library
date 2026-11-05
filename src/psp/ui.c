@@ -11,6 +11,7 @@
 #include <string.h>
 
 #include "psplibrary/storage.h"
+#include "psplibrary/navigation.h"
 
 #define PSPL_FRAMEBUFFER_STRIDE 512
 #define PSPL_FRAMEBUFFER_HEIGHT 272
@@ -26,6 +27,8 @@ typedef struct {
     size_t selected;
     pspl_platform_t filter;
     pspl_sort_t sort;
+    pspl_navigation_t navigation;
+    pspl_platform_t last_filter;
 } ui_state_t;
 
 static const pspl_platform_t filter_order[] = {
@@ -164,7 +167,6 @@ static void change_filter(ui_state_t *state, int direction)
             if (next < 0) next = count - 1;
             if (next >= count) next = 0;
             state->filter = filter_order[next];
-            state->selected = 0;
             return;
         }
     }
@@ -200,8 +202,10 @@ int pspl_ui_run(pspl_library_t *library, const char *database_path, int demo_mod
     unsigned int previous = 0;
 
     memset(&state, 0, sizeof(state));
+    pspl_navigation_init(&state.navigation);
     state.grid = 1;
     state.filter = PSPL_PLATFORM_ALL;
+    state.last_filter = state.filter;
     vram_base_address = 0x40000000U | (unsigned int)sceGeEdramGetAddr();
     pspDebugScreenSetBase((u32 *)vram_base_address);
     for (;;) {
@@ -221,7 +225,16 @@ int pspl_ui_run(pspl_library_t *library, const char *database_path, int demo_mod
             return -1;
         }
         previous_selected = state.selected;
+        if (state.filter == state.last_filter) {
+            pspl_navigation_remember(&state.navigation, state.filter, library, indices,
+                                     (size_t)count, state.selected);
+        }
+        pspl_navigation_restore(&state.navigation, state.filter, library, indices,
+                                (size_t)count, &state.selected);
         state.selected = clamp_selection(state.selected, count);
+        pspl_navigation_remember(&state.navigation, state.filter, library, indices,
+                                 (size_t)count, state.selected);
+        state.last_filter = state.filter;
         if (state.selected != previous_selected) dirty = 1;
         if (dirty) {
             int draw_offset = displayed_offset == 0 ? PSPL_FRAMEBUFFER_BYTES : 0;
@@ -248,10 +261,14 @@ int pspl_ui_run(pspl_library_t *library, const char *database_path, int demo_mod
             dirty = 1;
         }
         if ((pad.Buttons & PSP_CTRL_LTRIGGER) && !(previous & PSP_CTRL_LTRIGGER)) {
+            pspl_navigation_remember(&state.navigation, state.filter, library, indices,
+                                     (size_t)count, state.selected);
             change_filter(&state, -1);
             dirty = 1;
         }
         if ((pad.Buttons & PSP_CTRL_RTRIGGER) && !(previous & PSP_CTRL_RTRIGGER)) {
+            pspl_navigation_remember(&state.navigation, state.filter, library, indices,
+                                     (size_t)count, state.selected);
             change_filter(&state, 1);
             dirty = 1;
         }

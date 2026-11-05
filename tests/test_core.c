@@ -1,6 +1,7 @@
 #include "psplibrary/core.h"
 #include "psplibrary/storage.h"
 #include "psplibrary/tracker.h"
+#include "psplibrary/navigation.h"
 
 #include <assert.h>
 #include <stdio.h>
@@ -44,6 +45,47 @@ static void test_ids_and_sorting(void)
     assert(count == 3 && strcmp(library.games[indices[0]].title, "Bravo") == 0);
     count = pspl_library_filter_sort(&library, PSPL_PLATFORM_ALL, PSPL_SORT_LAST_PLAYED, indices, 4);
     assert(count == 3 && strcmp(library.games[indices[0]].title, "Alpha") == 0);
+    pspl_library_free(&library);
+}
+
+static void test_navigation(void)
+{
+    pspl_library_t library;
+    pspl_game_t game;
+    pspl_navigation_t navigation;
+    size_t indices[4];
+    size_t selected;
+    int count;
+
+    pspl_library_init(&library);
+    make_game(&game, PSPL_PLATFORM_PSP, "Alpha", "a"); game.total_seconds = 10; assert(pspl_library_add_game(&library, &game) == 0);
+    make_game(&game, PSPL_PLATFORM_PSP, "Bravo", "b"); game.total_seconds = 20; assert(pspl_library_add_game(&library, &game) == 0);
+    make_game(&game, PSPL_PLATFORM_GBA, "Charlie", "c"); game.total_seconds = 30; assert(pspl_library_add_game(&library, &game) == 0);
+
+    pspl_navigation_init(&navigation);
+    count = pspl_library_filter_sort(&library, PSPL_PLATFORM_ALL, PSPL_SORT_TITLE, indices, 4);
+    assert(count == 3);
+    pspl_navigation_remember(&navigation, PSPL_PLATFORM_ALL, &library, indices, (size_t)count, 1);
+    count = pspl_library_filter_sort(&library, PSPL_PLATFORM_ALL, PSPL_SORT_TOTAL_TIME, indices, 4);
+    selected = 0;
+    pspl_navigation_restore(&navigation, PSPL_PLATFORM_ALL, &library, indices, (size_t)count, &selected);
+    assert(strcmp(library.games[indices[selected]].title, "Bravo") == 0);
+
+    count = pspl_library_filter_sort(&library, PSPL_PLATFORM_PSP, PSPL_SORT_TITLE, indices, 4);
+    pspl_navigation_remember(&navigation, PSPL_PLATFORM_PSP, &library, indices, (size_t)count, 1);
+    count = pspl_library_filter_sort(&library, PSPL_PLATFORM_GBA, PSPL_SORT_TITLE, indices, 4);
+    selected = 99;
+    pspl_navigation_restore(&navigation, PSPL_PLATFORM_GBA, &library, indices, (size_t)count, &selected);
+    assert(selected == 0 && strcmp(library.games[indices[selected]].title, "Charlie") == 0);
+    count = pspl_library_filter_sort(&library, PSPL_PLATFORM_PSP, PSPL_SORT_TITLE, indices, 4);
+    selected = 0;
+    pspl_navigation_restore(&navigation, PSPL_PLATFORM_PSP, &library, indices, (size_t)count, &selected);
+    assert(selected == 1 && strcmp(library.games[indices[selected]].title, "Bravo") == 0);
+
+    count = pspl_library_filter_sort(&library, PSPL_PLATFORM_PSP, PSPL_SORT_TITLE, indices, 1);
+    selected = 1;
+    pspl_navigation_restore(&navigation, PSPL_PLATFORM_PSP, &library, indices, (size_t)count, &selected);
+    assert(selected == 0 && strcmp(library.games[indices[selected]].title, "Alpha") == 0);
     pspl_library_free(&library);
 }
 
@@ -417,6 +459,7 @@ static void test_stress_scaling(void)
 int main(void)
 {
     test_ids_and_sorting();
+    test_navigation();
     test_events();
     test_storage();
     test_psp_tracker_adapter();

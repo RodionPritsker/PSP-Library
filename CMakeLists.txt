@@ -5,6 +5,7 @@ project(psplibrary C)
 add_executable(${PROJECT_NAME}
     src/psp/main.c
     src/psp/ui.c
+    src/core/navigation.c
     src/core/core.c
     src/core/storage.c
     src/core/demo.c

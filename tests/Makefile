@@ -3,7 +3,7 @@ CFLAGS ?= -std=c99 -Wall -Wextra -pedantic -O2 -I../include
 
 all: test_core
 
-test_core: ../src/core/core.c ../src/core/storage.c ../src/tracker/psp_tracker.c ../src/tracker/psp_fs.c test_core.c
+test_core: ../src/core/core.c ../src/core/storage.c ../src/core/navigation.c ../src/tracker/psp_tracker.c ../src/tracker/psp_fs.c test_core.c
 	$(CC) $(CFLAGS) $^ -o $@
 
 run: test_core
