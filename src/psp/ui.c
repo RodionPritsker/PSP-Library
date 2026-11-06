@@ -69,6 +69,27 @@ static float ui_text_width(const char *text, int scale)
     return (float)pspl_text_width(text, scale);
 }
 
+static float list_platform_column_width(void)
+{
+    pspl_platform_t platform;
+    float width = 0.0f;
+    for (platform = PSPL_PLATFORM_PSP; platform <= PSPL_PLATFORM_OTHER; ++platform) {
+        float measured = ui_text_width(pspl_platform_name(platform), 1);
+        if (measured > width) width = measured;
+    }
+    /* Keep a pixel of spare room beyond the widest known platform label. */
+    return width + 4.0f;
+}
+
+static float list_duration_column_width(void)
+{
+    char maximum[16];
+    pspl_format_duration(UINT32_MAX, maximum, sizeof(maximum));
+    /* The column is sized from the largest representable duration, not the
+     * current row, so platform and time columns cannot squeeze each other. */
+    return ui_text_width(maximum, 1) + 4.0f;
+}
+
 static void draw_header(const ui_state_t *state, int demo_mode, size_t count,
                         size_t page, size_t pages)
 {
@@ -210,6 +231,12 @@ static void draw_list(const pspl_library_t *library, const ui_state_t *state,
     size_t page_end = page_start + visible;
     size_t i;
     char duration[16];
+    const float platform_column_width = list_platform_column_width();
+    const float duration_column_width = list_duration_column_width();
+    const float column_gap = 10.0f;
+    const float duration_column_left = 464.0f - duration_column_width;
+    const float platform_x = duration_column_left - column_gap - platform_column_width;
+    const float title_width = platform_x - column_gap - 47.0f;
     if (page_end > count) page_end = count;
     for (i = page_start; i < page_end; ++i) {
         const pspl_game_t *game = &library->games[indices[i]];
@@ -217,8 +244,6 @@ static void draw_list(const pspl_library_t *library, const ui_state_t *state,
         float duration_width;
         float duration_x;
         float platform_width;
-        float platform_x;
-        float title_width;
         int selected = i == state->navigation.selected;
         pspl_gfx_fill_rect(8.0f, y, 464.0f, 29.0f, selected ? COLOR_SELECTED : COLOR_PANEL);
         pspl_gfx_rect(8.0f, y, 464.0f, 29.0f, selected ? COLOR_SELECTED_BORDER : COLOR_BORDER, 1.0f);
@@ -227,13 +252,12 @@ static void draw_list(const pspl_library_t *library, const ui_state_t *state,
         duration_width = ui_text_width(duration, 1);
         duration_x = 464.0f - duration_width;
         platform_width = ui_text_width(game->platform, 1);
-        platform_x = duration_x - 10.0f - platform_width;
-        if (platform_x < 320.0f) platform_x = 320.0f;
-        title_width = platform_x - 10.0f - 47.0f;
         pspl_text_draw_clipped(47.0f, y + 5.0f, title_width, game->title, 1, COLOR_TEXT);
-        pspl_text_draw_clipped(platform_x, y + 5.0f,
-                               duration_x - 10.0f - platform_x, game->platform,
-                               1, COLOR_ACCENT);
+        if (platform_width + 1.0f <= platform_column_width)
+            pspl_text_draw(platform_x, y + 5.0f, game->platform, 1, COLOR_ACCENT);
+        else
+            pspl_text_draw_clipped(platform_x, y + 5.0f, platform_column_width,
+                                   game->platform, 1, COLOR_ACCENT);
         pspl_text_draw(duration_x, y + 5.0f, duration, 1, COLOR_TEXT);
     }
     if (count == 0) pspl_text_draw_centered(20.0f, 112.0f, 440.0f, "NO GAMES IN THIS FILTER", 2, COLOR_TEXT);

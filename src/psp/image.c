@@ -34,12 +34,15 @@ static int next_power_of_two(int value)
 static void placeholder(const char *label, float x, float y, float width, float height)
 {
     uint32_t accent = 0xFF3B6A83U;
+    int text_scale = width < 40.0f || height < 40.0f ? 1 : 2;
     if (label != NULL && strcmp(label, "PSP") == 0) accent = 0xFF4A7ED0U;
     else if (label != NULL && strcmp(label, "PS1") == 0) accent = 0xFF8D4E9AU;
     else if (label != NULL && strcmp(label, "GBA") == 0) accent = 0xFF3B9C79U;
     pspl_gfx_gradient_rect(x, y, width, height, accent, 0xFF16202BU);
     pspl_gfx_rect(x, y, width, height, 0xFF6C8CA2U, 1.0f);
-    if (label != NULL) pspl_text_draw_centered(x, y + height * 0.44f, width, label, 2, 0xFFDCE8F0U);
+    if (label != NULL)
+        pspl_text_draw_centered(x, y + height * (text_scale == 1 ? 0.38f : 0.44f),
+                                width, label, text_scale, 0xFFDCE8F0U);
 }
 
 static void resolve_path(const char *path, char output[PSPL_IMAGE_PATH_LEN])
