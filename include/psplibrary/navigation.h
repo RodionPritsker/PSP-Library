@@ -20,24 +20,31 @@ typedef struct {
 
 typedef struct {
     char selected_ids[PSPL_NAV_FILTER_COUNT][PSPL_ID_LEN];
-    size_t positions[PSPL_NAV_FILTER_COUNT];
+    pspl_platform_t filter;
+    pspl_sort_t sort;
+    int grid;
+    size_t selected;
+    char transition_id[PSPL_ID_LEN];
 } pspl_navigation_t;
 
 void pspl_navigation_init(pspl_navigation_t *navigation);
-void pspl_navigation_remember(pspl_navigation_t *navigation,
-                              pspl_platform_t filter,
-                              const pspl_library_t *library,
-                              const size_t *indices,
-                              size_t count,
-                              size_t selected);
-void pspl_navigation_restore(pspl_navigation_t *navigation,
-                             pspl_platform_t filter,
-                             const pspl_library_t *library,
-                             const size_t *indices,
-                             size_t count,
-                             size_t *selected);
-
-void pspl_navigation_move(int grid, size_t *selected, size_t count,
+int pspl_navigation_refresh(pspl_navigation_t *navigation,
+                            const pspl_library_t *library,
+                            size_t *indices, size_t capacity,
+                            size_t *count);
+int pspl_navigation_change_filter(pspl_navigation_t *navigation,
+                                  int direction,
+                                  const pspl_library_t *library,
+                                  size_t *indices, size_t capacity,
+                                  size_t current_count, size_t *count);
+int pspl_navigation_change_sort(pspl_navigation_t *navigation,
+                               const pspl_library_t *library,
+                               size_t *indices, size_t capacity,
+                               size_t current_count, size_t *count);
+void pspl_navigation_toggle_view(pspl_navigation_t *navigation);
+void pspl_navigation_move(pspl_navigation_t *navigation,
+                          const pspl_library_t *library,
+                          const size_t *indices, size_t count,
                           unsigned int direction);
 void pspl_navigation_repeat_init(pspl_navigation_repeat_t *repeat);
 unsigned int pspl_navigation_repeat(pspl_navigation_repeat_t *repeat,

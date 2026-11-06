@@ -39,99 +39,141 @@ static size_t find_id(const pspl_library_t *library, const size_t *indices,
     return count;
 }
 
+static void remember_current(pspl_navigation_t *navigation,
+                             const pspl_library_t *library,
+                             const size_t *indices, size_t count)
+{
+    if (navigation == NULL || count == 0 || library == NULL || indices == NULL) return;
+    if (navigation->selected >= count) navigation->selected = count - 1;
+    if (valid_game_index(library, indices[navigation->selected])) {
+        copy_id(navigation->selected_ids[(size_t)navigation->filter],
+                library->games[indices[navigation->selected]].id);
+    }
+}
+
+static int refresh_list(pspl_navigation_t *navigation,
+                        const pspl_library_t *library,
+                        size_t *indices, size_t capacity, size_t *count)
+{
+    int result;
+    size_t selected;
+    const char *preferred;
+
+    if (navigation == NULL || library == NULL || count == NULL ||
+        !valid_filter(navigation->filter)) return -1;
+    result = pspl_library_filter_sort(library, navigation->filter,
+                                      navigation->sort, indices, capacity);
+    if (result < 0) return result;
+    *count = (size_t)result;
+    navigation->selected = 0;
+    if (*count == 0) {
+        navigation->transition_id[0] = '\0';
+        return 0;
+    }
+
+    preferred = navigation->transition_id[0] != '\0'
+        ? navigation->transition_id
+        : navigation->selected_ids[(size_t)navigation->filter];
+    selected = find_id(library, indices, *count, preferred);
+    if (selected >= *count) selected = 0;
+    navigation->selected = selected;
+    copy_id(navigation->selected_ids[(size_t)navigation->filter],
+            library->games[indices[selected]].id);
+    navigation->transition_id[0] = '\0';
+    return 0;
+}
+
 void pspl_navigation_init(pspl_navigation_t *navigation)
 {
-    if (navigation != NULL) memset(navigation, 0, sizeof(*navigation));
-}
-
-void pspl_navigation_remember(pspl_navigation_t *navigation,
-                              pspl_platform_t filter,
-                              const pspl_library_t *library,
-                              const size_t *indices,
-                              size_t count,
-                              size_t selected)
-{
-    if (navigation == NULL || !valid_filter(filter)) return;
-    if (count == 0 || library == NULL || indices == NULL) return;
-    if (selected >= count) selected = count - 1;
-    if (!valid_game_index(library, indices[selected])) return;
-    navigation->positions[(size_t)filter] = selected;
-    copy_id(navigation->selected_ids[(size_t)filter],
-            library->games[indices[selected]].id);
-}
-
-void pspl_navigation_restore(pspl_navigation_t *navigation,
-                             pspl_platform_t filter,
-                             const pspl_library_t *library,
-                             const size_t *indices,
-                             size_t count,
-                             size_t *selected)
-{
-    size_t filter_index;
-    size_t restored;
-    if (navigation == NULL || !valid_filter(filter) || selected == NULL) return;
-    filter_index = (size_t)filter;
-    if (count == 0 || library == NULL || indices == NULL) {
-        *selected = 0;
-        return;
+    if (navigation != NULL) {
+        memset(navigation, 0, sizeof(*navigation));
+        navigation->filter = PSPL_PLATFORM_ALL;
+        navigation->sort = PSPL_SORT_TITLE;
+        navigation->grid = 1;
     }
-
-    restored = find_id(library, indices, count, navigation->selected_ids[filter_index]);
-    if (restored >= count) {
-        restored = navigation->positions[filter_index];
-        if (restored >= count) restored = count - 1;
-        while (restored > 0 && !valid_game_index(library, indices[restored])) --restored;
-        if (!valid_game_index(library, indices[restored])) {
-            navigation->positions[filter_index] = 0;
-            navigation->selected_ids[filter_index][0] = '\0';
-            *selected = 0;
-            return;
-        }
-        copy_id(navigation->selected_ids[filter_index],
-                library->games[indices[restored]].id);
-    }
-    navigation->positions[filter_index] = restored;
-    *selected = restored;
 }
 
-void pspl_navigation_move(int grid, size_t *selected, size_t count,
+int pspl_navigation_refresh(pspl_navigation_t *navigation,
+                            const pspl_library_t *library,
+                            size_t *indices, size_t capacity,
+                            size_t *count)
+{
+    return refresh_list(navigation, library, indices, capacity, count);
+}
+
+int pspl_navigation_change_filter(pspl_navigation_t *navigation,
+                                  int direction,
+                                  const pspl_library_t *library,
+                                  size_t *indices, size_t capacity,
+                                  size_t current_count, size_t *count)
+{
+    pspl_platform_t next;
+    if (navigation == NULL || direction == 0) return -1;
+    remember_current(navigation, library, indices, current_count);
+    next = (pspl_platform_t)((int)navigation->filter + (direction > 0 ? 1 : -1));
+    if (next < PSPL_PLATFORM_ALL) next = PSPL_PLATFORM_OTHER;
+    if (next > PSPL_PLATFORM_OTHER) next = PSPL_PLATFORM_ALL;
+    if (current_count != 0) {
+        copy_id(navigation->transition_id,
+                navigation->selected_ids[(size_t)navigation->filter]);
+    } else {
+        navigation->transition_id[0] = '\0';
+    }
+    navigation->filter = next;
+    return refresh_list(navigation, library, indices, capacity, count);
+}
+
+int pspl_navigation_change_sort(pspl_navigation_t *navigation,
+                               const pspl_library_t *library,
+                               size_t *indices, size_t capacity,
+                               size_t current_count, size_t *count)
+{
+    if (navigation == NULL) return -1;
+    remember_current(navigation, library, indices, current_count);
+    navigation->sort = (pspl_sort_t)((navigation->sort + 1) % 3);
+    return refresh_list(navigation, library, indices, capacity, count);
+}
+
+void pspl_navigation_toggle_view(pspl_navigation_t *navigation)
+{
+    if (navigation != NULL) navigation->grid = !navigation->grid;
+}
+
+void pspl_navigation_move(pspl_navigation_t *navigation,
+                          const pspl_library_t *library,
+                          const size_t *indices, size_t count,
                           unsigned int direction)
 {
     size_t current;
 
-    if (selected == NULL || count == 0) return;
-    if (*selected >= count) *selected = count - 1;
-    current = *selected;
+    if (navigation == NULL || count == 0) return;
+    if (navigation->selected >= count) navigation->selected = count - 1;
+    current = navigation->selected;
 
-    if (!grid) {
+    if (!navigation->grid) {
         if ((direction & PSPL_NAV_UP) != 0U) {
-            if (current > 0) *selected = current - 1;
+            if (current > 0) navigation->selected = current - 1;
         } else if ((direction & PSPL_NAV_DOWN) != 0U) {
-            if (current + 1 < count) *selected = current + 1;
+            if (current + 1 < count) navigation->selected = current + 1;
         }
-        return;
-    }
-
-    if ((direction & PSPL_NAV_LEFT) != 0U) {
-        if (current % PSPL_NAV_GRID_COLUMNS != 0U) {
-            *selected = current - 1;
-        } else if (current > 0 && current % PSPL_NAV_GRID_PAGE_SIZE == 0U) {
-            /* The first card on a page links back to the previous page. */
-            *selected = current - 1;
+    } else if ((direction & PSPL_NAV_LEFT) != 0U) {
+        if (current % PSPL_NAV_GRID_COLUMNS != 0U ||
+            (current > 0 && current % PSPL_NAV_GRID_PAGE_SIZE == 0U)) {
+            navigation->selected = current - 1;
         }
     } else if ((direction & PSPL_NAV_RIGHT) != 0U) {
-        if (current + 1 >= count) return;
-        if (current % PSPL_NAV_GRID_COLUMNS != PSPL_NAV_GRID_COLUMNS - 1U ||
-            current % PSPL_NAV_GRID_PAGE_SIZE == PSPL_NAV_GRID_PAGE_SIZE - 1U) {
-            /* The last card on a page links to the next page. */
-            *selected = current + 1;
-        }
+        if (current + 1 < count &&
+            (current % PSPL_NAV_GRID_COLUMNS != PSPL_NAV_GRID_COLUMNS - 1U ||
+             current % PSPL_NAV_GRID_PAGE_SIZE == PSPL_NAV_GRID_PAGE_SIZE - 1U))
+            navigation->selected = current + 1;
     } else if ((direction & PSPL_NAV_UP) != 0U) {
-        if (current >= PSPL_NAV_GRID_COLUMNS) *selected = current - PSPL_NAV_GRID_COLUMNS;
+        if (current >= PSPL_NAV_GRID_COLUMNS)
+            navigation->selected = current - PSPL_NAV_GRID_COLUMNS;
     } else if ((direction & PSPL_NAV_DOWN) != 0U) {
         if (current + PSPL_NAV_GRID_COLUMNS < count)
-            *selected = current + PSPL_NAV_GRID_COLUMNS;
+            navigation->selected = current + PSPL_NAV_GRID_COLUMNS;
     }
+    remember_current(navigation, library, indices, count);
 }
 
 void pspl_navigation_repeat_init(pspl_navigation_repeat_t *repeat)
