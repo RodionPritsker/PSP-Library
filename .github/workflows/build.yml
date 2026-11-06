@@ -41,6 +41,7 @@ jobs:
           mkdir -p package/PSP/GAME/PSPLIBRARY
           cp build/EBOOT.PBP package/PSP/GAME/PSPLIBRARY/EBOOT.PBP
           cp -r covers package/PSP/GAME/PSPLIBRARY/covers
+          cp -r assets package/PSP/GAME/PSPLIBRARY/assets
           mkdir -p package/PSP/SAVEDATA/PSPLIBRARY
           cp test100.flag.example package/PSP/SAVEDATA/PSPLIBRARY/test100.flag.example
           (cd package && zip -r ../psp-library-ppsspp.zip PSP)
@@ -48,7 +49,7 @@ jobs:
       - name: Upload EBOOT and PPSSPP package
         uses: actions/upload-artifact@v4
         with:
-          name: psp-library-v0.3
+          name: psp-library-v0.3.1
           if-no-files-found: error
           path: |
             build/EBOOT.PBP

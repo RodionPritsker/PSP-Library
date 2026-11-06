@@ -225,3 +225,40 @@ void pspl_gfx_draw_texture(const void *pixels, int texture_width, int texture_he
                    GU_VERTEX_32BITF | GU_TRANSFORM_2D, 2, NULL, vertices);
     sceGuDisable(GU_TEXTURE_2D);
 }
+
+void pspl_gfx_draw_t8(const void *pixels, int texture_width, int texture_height,
+                      float u, float v, float uv_width, float uv_height,
+                      float x, float y, float width, float height,
+                      uint32_t color, const uint32_t *clut)
+{
+    pspl_texture_vertex_t *vertices;
+    if (pixels == NULL || clut == NULL || texture_width <= 0 || texture_height <= 0)
+        return;
+    vertices = (pspl_texture_vertex_t *)sceGuGetMemory(sizeof(*vertices) * 2U);
+    if (vertices == NULL) return;
+    sceGuEnable(GU_TEXTURE_2D);
+    sceGuEnable(GU_ALPHA_TEST);
+    sceGuAlphaFunc(GU_GREATER, 64, 255);
+    sceGuClutMode(GU_PSM_8888, 0, 0xFF, 0);
+    sceGuClutLoad(32, clut);
+    sceGuTexMode(GU_PSM_T8, 0, 0, GU_FALSE);
+    sceGuTexImage(0, texture_width, texture_height, texture_width, pixels);
+    sceGuTexFunc(GU_TFX_MODULATE, GU_TCC_RGBA);
+    sceGuTexFilter(GU_LINEAR, GU_LINEAR);
+    vertices[0].u = u;
+    vertices[0].v = v;
+    vertices[0].color = color;
+    vertices[0].x = x;
+    vertices[0].y = y;
+    vertices[0].z = 0.0f;
+    vertices[1].u = u + uv_width;
+    vertices[1].v = v + uv_height;
+    vertices[1].color = color;
+    vertices[1].x = x + width;
+    vertices[1].y = y + height;
+    vertices[1].z = 0.0f;
+    sceGuDrawArray(GU_SPRITES, GU_TEXTURE_32BITF | GU_COLOR_8888 |
+                   GU_VERTEX_32BITF | GU_TRANSFORM_2D, 2, NULL, vertices);
+    sceGuDisable(GU_ALPHA_TEST);
+    sceGuDisable(GU_TEXTURE_2D);
+}

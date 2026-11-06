@@ -20,6 +20,7 @@ try {
     New-Item -ItemType Directory -Path $target -Force | Out-Null
     Copy-Item -LiteralPath $resolvedEboot -Destination (Join-Path $target "EBOOT.PBP") -Force
     Copy-Item -LiteralPath (Join-Path $projectRoot "covers") -Destination (Join-Path $target "covers") -Recurse -Force
+    Copy-Item -LiteralPath (Join-Path $projectRoot "assets") -Destination (Join-Path $target "assets") -Recurse -Force
     $testFlagTarget = Join-Path $staging "PSP\SAVEDATA\PSPLIBRARY"
     New-Item -ItemType Directory -Path $testFlagTarget -Force | Out-Null
     Copy-Item -LiteralPath (Join-Path $projectRoot "test100.flag.example") -Destination (Join-Path $testFlagTarget "test100.flag.example") -Force

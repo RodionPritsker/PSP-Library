@@ -3,6 +3,8 @@
 #include "psplibrary/tracker.h"
 #include "psplibrary/navigation.h"
 #include "psplibrary/demo.h"
+#include "psplibrary/theme.h"
+#include "psplibrary/text_layout.h"
 
 #include <assert.h>
 #include <stdio.h>
@@ -670,6 +672,62 @@ static void test_cover_assets_are_runtime_sized(void)
     }
 }
 
+static void test_visual_polish_helpers(void)
+{
+    static const char mixed[] = "PSP\xD0\x9B\xD0\xB8\xD0\xB1\xD0\xB0\xD1\x80\xD1\x8C";
+    size_t index = 0;
+    size_t count = 0;
+    uint32_t codepoint = 0;
+    int mode;
+    int accent;
+
+    while (mixed[index] != '\0') {
+        size_t next = pspl_utf8_next(mixed, index, &codepoint);
+        assert(next > index);
+        index = next;
+        ++count;
+    }
+    assert(count == 9U);
+    assert(pspl_utf8_length(mixed) == 9U);
+    assert(pspl_utf8_truncate(mixed, 3U) == 3U);
+    assert(pspl_utf8_truncate(mixed, 4U) == 3U);
+    assert(pspl_utf8_truncate(mixed, 5U) == 5U);
+
+    for (mode = PSPL_THEME_DARK; mode <= PSPL_THEME_LIGHT; ++mode) {
+        for (accent = PSPL_THEME_AMBER; accent < PSPL_THEME_ACCENT_COUNT; ++accent) {
+            const pspl_theme_t *theme = pspl_theme_get((pspl_theme_mode_t)mode,
+                                                       (pspl_theme_accent_t)accent);
+            assert(theme->background != theme->surface);
+            assert(theme->accent != theme->border);
+            assert(pspl_theme_contrast_ok(theme->background, theme->primary_text));
+            assert(pspl_theme_contrast_ok(theme->background, theme->secondary_text));
+        }
+    }
+    pspl_theme_set(PSPL_THEME_DARK, PSPL_THEME_AMBER);
+    assert(strcmp(pspl_theme_mode_name(PSPL_THEME_DARK), "DARK") == 0);
+    assert(strcmp(pspl_theme_accent_name(PSPL_THEME_CRIMSON), "CRIMSON") == 0);
+}
+
+static void test_font_atlas_assets(void)
+{
+    unsigned char header[28];
+    FILE *meta = fopen("../assets/fonts/pspl_noto_sans_sdf.meta", "rb");
+    FILE *atlas = fopen("../assets/fonts/pspl_noto_sans_sdf.t8", "rb");
+    long meta_size;
+    long atlas_size;
+    assert(meta != NULL && atlas != NULL);
+    assert(fread(header, 1, sizeof(header), meta) == sizeof(header));
+    assert(memcmp(header, "T8S1", 4) == 0);
+    assert(fseek(meta, 0, SEEK_END) == 0);
+    meta_size = ftell(meta);
+    assert(meta_size == 137212L);
+    assert(fseek(atlas, 0, SEEK_END) == 0);
+    atlas_size = ftell(atlas);
+    assert(atlas_size == 512L * 512L);
+    fclose(meta);
+    fclose(atlas);
+}
+
 int main(void)
 {
     test_ids_and_sorting();
@@ -682,6 +740,8 @@ int main(void)
     test_stress_scaling();
     test_large_demo_fixture();
     test_cover_assets_are_runtime_sized();
+    test_visual_polish_helpers();
+    test_font_atlas_assets();
     puts("PSP Library core tests: OK");
     return 0;
 }

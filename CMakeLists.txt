@@ -12,6 +12,8 @@ add_executable(${PROJECT_NAME}
     src/core/core.c
     src/core/storage.c
     src/core/demo.c
+    src/core/theme.c
+    src/core/text_layout.c
     src/tracker/psp_tracker.c
     src/tracker/psp_fs.c
 )
@@ -34,5 +36,5 @@ create_pbp_file(
     BACKGROUND_PATH NULL
     PREVIEW_PATH NULL
     TITLE "PSP Library"
-    VERSION 03.00
+    VERSION 03.01
 )

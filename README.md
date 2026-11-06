@@ -1,8 +1,8 @@
-# PSP Library v0.3
+# PSP Library v0.3.1
 
 PSP Library is an offline game-activity diary for PSP and PPSSPP. It stores game metadata and sessions locally; it does not launch games, hook a system PRX, download covers, or provide online features.
 
-The v0.3 UI is designed for the 480x272 PSP screen and uses the PSP GU for rendering. It has a dark card-based grid, a compact list mode, graphical game details, local PNG covers, a bounded image cache, and the existing PSPLIB 2 database/core APIs.
+The v0.3.1 UI is designed for the 480x272 PSP screen and uses the PSP GU for rendering. It adds readable Latin/Cyrillic typography, a warm Dark Amber default theme, a compact 3x2 grid, a title-prioritized list mode, graphical game details, local PNG covers, a bounded image cache, and the existing PSPLIB 2 database/core APIs.
 
 ## Project structure
 
@@ -13,17 +13,21 @@ include/psplibrary/
   navigation.h       Selection memory per platform filter
   demo.h             Five-game and isolated 100-game fixtures
   gfx.h              PSP GU 2D primitives and framebuffer setup
-  text.h             Small graphical bitmap font and clipping
+  text.h             SDF/T8 text renderer, metrics, wrapping, and clipping
+  text_layout.h      Portable UTF-8 boundary helpers
+  theme.h            14 semantic Dark/Light x accent themes
   image.h            PNG cover cache API
   ui.h               PSP screens and controller navigation
-src/core/            Portable library, storage, navigation, and fixtures
+src/core/            Portable library, storage, navigation, fixtures, themes, and UTF-8 helpers
 src/psp/
   gfx.c              GU initialization, double buffering, primitives
-  text.c             Lightweight graphical text renderer
+  text.c             Offline SDF/T8 atlas renderer with CLUT and fallback
   image.c            Streaming PNG decode, resize, cache, and fallback
   ui.c               Grid, list, details, input repeat, and navigation
 src/tracker/         Existing PSP identity/session adapter
+assets/fonts/        Generated Noto Sans SDF/T8 atlas and license notices
 covers/              Original test covers used by the demo fixtures
+tools/               Build-time atlas generator
 tests/               Host-side core/storage/tracker tests
 scripts/             PPSSPP ZIP packaging helper
 ```
@@ -41,7 +45,19 @@ make -j2
 
 This creates `build/EBOOT.PBP`. The root `Makefile` is also available for a direct PSPSDK build. The PSP target links the GU, PNG, and zlib libraries supplied by PSPDEV.
 
-The GitHub Actions workflow runs host tests first, then builds the EBOOT in `pspdev/pspdev:latest`, packages the EBOOT, cover resources, and the 100-game test-mode flag example, and uploads both artifacts.
+### Font atlas generation
+
+The PSP runtime does not contain a font generator. The checked-in `assets/fonts/` files are the generated runtime resource. To regenerate them during development, provide a build-time `msdf-atlas-gen` executable and a licensed Noto Sans Medium source font:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\build_font_atlas.ps1 `
+  -MsdfAtlasGen C:\path\to\msdf-atlas-gen.exe `
+  -Font C:\path\to\NotoSans-Medium.ttf
+```
+
+The generator emits a grayscale SDF as an 8-bit T8 texture plus a compact lookup/metrics file. Runtime drawing uses the PSP GU T8 path and a 256-entry CLUT; it performs no per-glyph heap allocation. If either resource is missing, the UI remains safe and uses an outline fallback.
+
+The GitHub Actions workflow runs host tests first, then builds the EBOOT in `pspdev/pspdev:latest`, packages the EBOOT, font atlas, cover resources, and the 100-game test-mode flag example, and uploads both artifacts.
 
 ## Installation and data
 
@@ -92,13 +108,13 @@ The included `covers/` files are original project test artwork, pre-scaled to fi
 
 ## Rendering and memory
 
-The UI no longer uses `pspDebugScreenPrintf`. It uses a compact PSP GU layer with two 512x272 RGBA framebuffers, VBlank synchronization, a depth-buffer reservation, alpha blending, textured sprites, geometric panels, and a small 5x7 graphical font. The framebuffer pair uses about 1.1 MiB of VRAM; the depth buffer reserves about 0.28 MiB. Cover textures are kept in regular RAM, with eight scaled textures requiring at most roughly 720 KiB plus decoder working memory for one PNG row. GU command lists are 1 MiB each, vertices are allocated from the active list, and texture buffers are 16-byte aligned before cache writeback. The first version intentionally avoids transitions and full-library cover preloading.
+The UI no longer uses `pspDebugScreenPrintf`. It uses a compact PSP GU layer with two 512x272 RGBA framebuffers, VBlank synchronization, a depth-buffer reservation, alpha blending, textured sprites, geometric panels, and a generated SDF/T8 font. The framebuffer pair uses about 1.1 MiB of VRAM; the depth buffer reserves about 0.28 MiB. Cover textures are kept in regular RAM, with eight scaled textures requiring at most roughly 720 KiB plus decoder working memory for one PNG row. GU command lists are 1 MiB each, vertices are allocated from the active list, and texture buffers are 16-byte aligned before cache writeback. The new font package is 262,144 bytes of T8 pixels plus 137,212 bytes of metrics/lookup data before allocator overhead; these are resource sizes, not PSP heap measurements. The implementation keeps the existing framebuffer/command-list lifetimes and avoids transitions and full-library cover preloading.
 
-The font currently renders ASCII directly and maps other UTF-8 sequences to a safe fallback glyph. The data model already supports UTF-8 bytes in titles; a full Cyrillic glyph set can be added later without changing storage.
+Typography uses proportional metrics, UTF-8 codepoint boundaries, Latin/Cyrillic fallback, word wrapping, and ellipsis. The theme module contains all 14 Dark/Light x Amber/Ocean/Mint/Forest/Violet/Rose/Crimson combinations with semantic colors. v0.3.1 keeps switching programmatic only; a settings screen and persistence are deferred to v0.3.2.
 
 ## Compatibility
 
-The v0.3 changes preserve:
+The v0.3.1 changes preserve:
 
 - PSPLIB 2 and migration from legacy databases
 - dynamic game/session storage, CRC validation, and `.bak` recovery

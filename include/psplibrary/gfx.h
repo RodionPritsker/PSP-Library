@@ -27,5 +27,9 @@ void pspl_gfx_gradient_rect(float x, float y, float width, float height,
 void pspl_gfx_draw_texture(const void *pixels, int texture_width, int texture_height,
                            int image_width, int image_height,
                            float x, float y, float width, float height, uint32_t color);
+void pspl_gfx_draw_t8(const void *pixels, int texture_width, int texture_height,
+                      float u, float v, float uv_width, float uv_height,
+                      float x, float y, float width, float height,
+                      uint32_t color, const uint32_t *clut);
 
 #endif
