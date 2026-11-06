@@ -192,12 +192,16 @@ static void draw_range(float x, float y, const char *text, size_t start, size_t 
         size_t next = pspl_utf8_next(text, index, &codepoint);
         const pspl_font_glyph_t *glyph = font_glyph(codepoint);
         if (g_font.loaded && glyph != NULL && glyph->width > 0.0f && glyph->height > 0.0f) {
+            float glyph_width = glyph->width * (float)g_font.atlas_width /
+                                g_font.base_size * size;
+            float glyph_height = glyph->height * (float)g_font.atlas_height /
+                                 g_font.base_size * size;
             float glyph_x = cursor + glyph->x_offset * size;
             float glyph_y = y + (glyph->y_offset - g_font.ascender) * size;
             pspl_gfx_draw_t8(g_font.atlas, (int)g_font.atlas_width, (int)g_font.atlas_height,
                              glyph->u * g_font.atlas_width, glyph->v * g_font.atlas_height,
                              glyph->width * g_font.atlas_width, glyph->height * g_font.atlas_height,
-                             glyph_x, glyph_y, glyph->width * size, glyph->height * size,
+                             glyph_x, glyph_y, glyph_width, glyph_height,
                              color, g_clut);
         } else if (!g_font.loaded) {
             draw_fallback(cursor, y, codepoint, scale, color);
