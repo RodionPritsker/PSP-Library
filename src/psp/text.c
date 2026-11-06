@@ -11,7 +11,8 @@
 
 #define PSPL_FONT_ATLAS_PATH "ms0:/PSP/GAME/PSPLIBRARY/assets/fonts/pspl_noto_sans_sdf.t8"
 #define PSPL_FONT_META_PATH  "ms0:/PSP/GAME/PSPLIBRARY/assets/fonts/pspl_noto_sans_sdf.meta"
-#define PSPL_FONT_MAGIC "T8S1"
+#define PSPL_FONT_MAGIC_V1 "T8S1"
+#define PSPL_FONT_MAGIC_V2 "T8S2"
 #define PSPL_FONT_MAX_CODEPOINT 65536U
 
 typedef struct {
@@ -20,8 +21,10 @@ typedef struct {
     float v;
     float width;
     float height;
-    float x_offset;
-    float y_offset;
+    float plane_left;
+    float plane_top;
+    float plane_width;
+    float plane_height;
     float advance;
 } pspl_font_glyph_t;
 
@@ -61,17 +64,37 @@ static int read_file(const char *path, void *buffer, size_t size)
     return ok;
 }
 
+static int valid_float(float value)
+{
+    return value == value && value > -100000.0f && value < 100000.0f;
+}
+
+static int valid_glyph(const pspl_font_glyph_t *glyph)
+{
+    return glyph != NULL && valid_float(glyph->u) && valid_float(glyph->v) &&
+           valid_float(glyph->width) && valid_float(glyph->height) &&
+           valid_float(glyph->plane_left) && valid_float(glyph->plane_top) &&
+           valid_float(glyph->plane_width) && valid_float(glyph->plane_height) &&
+           valid_float(glyph->advance) && glyph->u >= 0.0f && glyph->v >= 0.0f &&
+           glyph->width >= 0.0f && glyph->height >= 0.0f &&
+           glyph->u + glyph->width <= 1.001f && glyph->v + glyph->height <= 1.001f &&
+           glyph->plane_width >= 0.0f && glyph->plane_height >= 0.0f &&
+           glyph->advance >= 0.0f;
+}
+
 int pspl_text_init(void)
 {
     FILE *file;
     char magic[4];
+    int legacy_format;
     size_t atlas_size;
     if (g_font.loaded) return 0;
     file = fopen(PSPL_FONT_META_PATH, "rb");
     if (file == NULL) return -1;
     memset(&g_font, 0, sizeof(g_font));
     if (fread(magic, 1, sizeof(magic), file) != sizeof(magic) ||
-        memcmp(magic, PSPL_FONT_MAGIC, sizeof(magic)) != 0 ||
+        (memcmp(magic, PSPL_FONT_MAGIC_V1, sizeof(magic)) != 0 &&
+         memcmp(magic, PSPL_FONT_MAGIC_V2, sizeof(magic)) != 0) ||
         fread(&g_font.atlas_width, sizeof(g_font.atlas_width), 1, file) != 1 ||
         fread(&g_font.atlas_height, sizeof(g_font.atlas_height), 1, file) != 1 ||
         fread(&g_font.line_height, sizeof(g_font.line_height), 1, file) != 1 ||
@@ -79,23 +102,74 @@ int pspl_text_init(void)
         fread(&g_font.base_size, sizeof(g_font.base_size), 1, file) != 1 ||
         fread(&g_font.glyph_count, sizeof(g_font.glyph_count), 1, file) != 1 ||
         g_font.atlas_width == 0 || g_font.atlas_height == 0 ||
-        g_font.glyph_count == 0 || g_font.glyph_count > 4096U) {
+        g_font.glyph_count == 0 || g_font.glyph_count > 4096U ||
+        g_font.atlas_width > 2048U || g_font.atlas_height > 2048U ||
+        g_font.base_size <= 0.0f || !valid_float(g_font.line_height) ||
+        !valid_float(g_font.ascender) || g_font.line_height <= 0.0f) {
         fclose(file);
         free_font();
         return -1;
     }
     g_font.lookup = (uint16_t *)memalign(16, sizeof(*g_font.lookup) * PSPL_FONT_MAX_CODEPOINT);
     g_font.glyphs = (pspl_font_glyph_t *)memalign(16, sizeof(*g_font.glyphs) * g_font.glyph_count);
+    legacy_format = memcmp(magic, PSPL_FONT_MAGIC_V1, sizeof(magic)) == 0;
     if (g_font.lookup == NULL || g_font.glyphs == NULL ||
         fread(g_font.lookup, sizeof(*g_font.lookup), PSPL_FONT_MAX_CODEPOINT, file) !=
-            PSPL_FONT_MAX_CODEPOINT ||
-        fread(g_font.glyphs, sizeof(*g_font.glyphs), g_font.glyph_count, file) !=
-            g_font.glyph_count) {
+            PSPL_FONT_MAX_CODEPOINT) {
         fclose(file);
         free_font();
         return -1;
     }
+    {
+        uint32_t i;
+        for (i = 0; i < g_font.glyph_count; ++i) {
+            pspl_font_glyph_t *glyph = &g_font.glyphs[i];
+            float legacy_values[7];
+            if (fread(&glyph->codepoint, sizeof(glyph->codepoint), 1, file) != 1) {
+                fclose(file);
+                free_font();
+                return -1;
+            }
+            if (legacy_format) {
+                if (fread(legacy_values, sizeof(*legacy_values), 7, file) != 7) {
+                    fclose(file);
+                    free_font();
+                    return -1;
+                }
+                glyph->u = legacy_values[0];
+                glyph->v = legacy_values[1];
+                glyph->width = legacy_values[2];
+                glyph->height = legacy_values[3];
+                glyph->plane_left = legacy_values[4];
+                glyph->plane_top = legacy_values[5];
+                glyph->plane_width = legacy_values[2] * (float)g_font.atlas_width /
+                                     g_font.base_size;
+                glyph->plane_height = legacy_values[3] * (float)g_font.atlas_height /
+                                      g_font.base_size;
+                glyph->advance = legacy_values[6];
+            } else if (fread(&glyph->u, sizeof(float), 9, file) != 9) {
+                fclose(file);
+                free_font();
+                return -1;
+            }
+        }
+    }
     fclose(file);
+    {
+        uint32_t i;
+        for (i = 0; i < g_font.glyph_count; ++i) {
+            if (!valid_glyph(&g_font.glyphs[i])) {
+                free_font();
+                return -1;
+            }
+        }
+        for (i = 0; i < PSPL_FONT_MAX_CODEPOINT; ++i) {
+            if (g_font.lookup[i] > g_font.glyph_count) {
+                free_font();
+                return -1;
+            }
+        }
+    }
     atlas_size = (size_t)g_font.atlas_width * (size_t)g_font.atlas_height;
     g_font.atlas = (unsigned char *)memalign(16, atlas_size);
     if (g_font.atlas == NULL || read_file(PSPL_FONT_ATLAS_PATH, g_font.atlas, atlas_size) != 0) {
@@ -123,7 +197,18 @@ static void build_clut(void)
     unsigned int i;
     if (g_clut_ready) return;
     for (i = 0; i < 256U; ++i) {
-        g_clut[i] = ((uint32_t)i << 24) | 0x00FFFFFFU;
+        float t;
+        unsigned int alpha;
+        /* SDF edge is centred around 0.5.  A short smooth transition keeps
+         * the background transparent without the old 64-level halo. */
+        if (i <= 96U) alpha = 0U;
+        else if (i >= 160U) alpha = 255U;
+        else {
+            t = (float)(i - 96U) / 64.0f;
+            t = t * t * (3.0f - 2.0f * t);
+            alpha = (unsigned int)(t * 255.0f + 0.5f);
+        }
+        g_clut[i] = ((uint32_t)alpha << 24) | 0x00FFFFFFU;
     }
     g_clut_ready = 1;
 }
@@ -191,13 +276,12 @@ static void draw_range(float x, float y, const char *text, size_t start, size_t 
     while (text != NULL && index < end && text[index] != '\0') {
         size_t next = pspl_utf8_next(text, index, &codepoint);
         const pspl_font_glyph_t *glyph = font_glyph(codepoint);
-        if (g_font.loaded && glyph != NULL && glyph->width > 0.0f && glyph->height > 0.0f) {
-            float glyph_width = glyph->width * (float)g_font.atlas_width /
-                                g_font.base_size * size;
-            float glyph_height = glyph->height * (float)g_font.atlas_height /
-                                 g_font.base_size * size;
-            float glyph_x = cursor + glyph->x_offset * size;
-            float glyph_y = y + (glyph->y_offset - g_font.ascender) * size;
+        if (g_font.loaded && glyph != NULL && glyph->width > 0.0f && glyph->height > 0.0f &&
+            glyph->plane_width > 0.0f && glyph->plane_height > 0.0f) {
+            float glyph_width = glyph->plane_width * size;
+            float glyph_height = glyph->plane_height * size;
+            float glyph_x = cursor + glyph->plane_left * size;
+            float glyph_y = y + (glyph->plane_top - g_font.ascender) * size;
             pspl_gfx_draw_t8(g_font.atlas, (int)g_font.atlas_width, (int)g_font.atlas_height,
                              glyph->u * g_font.atlas_width, glyph->v * g_font.atlas_height,
                              glyph->width * g_font.atlas_width, glyph->height * g_font.atlas_height,
@@ -217,21 +301,37 @@ static void draw_ellipsis(float x, float y, int scale, uint32_t color)
     draw_range(x, y, dots, 0, sizeof(dots) - 1U, scale, color);
 }
 
+static void draw_prefix(float x, float y, float width, const char *text,
+                        size_t start, size_t end, int scale, uint32_t color)
+{
+    size_t index = start;
+    size_t fitted = start;
+    if (width <= 0.0f) return;
+    while (index < end) {
+        size_t next = pspl_utf8_next(text, index, NULL);
+        if (range_width(text, start, next, scale) > width) break;
+        fitted = next;
+        index = next;
+    }
+    draw_range(x, y, text, start, fitted, scale, color);
+}
+
 static void draw_clipped_range(float x, float y, float width, const char *text,
-                               size_t start, size_t end, int scale, uint32_t color)
+                               size_t start, size_t end, int scale, uint32_t color,
+                               int force_ellipsis)
 {
     static const char ellipsis[] = "...";
     float ellipsis_width;
     float available;
     size_t index;
     if (text == NULL || width <= 0.0f || start >= end) return;
-    if (range_width(text, start, end, scale) <= width) {
+    if (!force_ellipsis && range_width(text, start, end, scale) <= width) {
         draw_range(x, y, text, start, end, scale, color);
         return;
     }
     ellipsis_width = range_width(ellipsis, 0, sizeof(ellipsis) - 1U, scale);
     if (ellipsis_width >= width) {
-        draw_ellipsis(x, y, scale, color);
+        draw_prefix(x, y, width, ellipsis, 0, sizeof(ellipsis) - 1U, scale, color);
         return;
     }
     available = width - ellipsis_width;
@@ -257,7 +357,7 @@ void pspl_text_draw_clipped(float x, float y, float width, const char *text,
 {
     if (text == NULL || scale < 1 || width <= 0.0f) return;
     build_clut();
-    draw_clipped_range(x, y, width, text, 0, strlen(text), scale, color);
+    draw_clipped_range(x, y, width, text, 0, strlen(text), scale, color, 0);
 }
 
 void pspl_text_draw_centered(float x, float y, float width, const char *text,
@@ -321,7 +421,7 @@ void pspl_text_draw_wrapped(float x, float y, float width, const char *text,
         }
         if (line == max_lines - 1 && more)
             draw_clipped_range(x, y + line * pspl_text_line_height(scale), width,
-                               text, line_start, end, scale, color);
+                               text, line_start, end, scale, color, 1);
         else
             draw_range(x, y + line * pspl_text_line_height(scale), text,
                        line_start, end, scale, color);

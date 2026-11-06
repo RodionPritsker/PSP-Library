@@ -10,7 +10,10 @@ $temporaryDirectory = Join-Path ([System.IO.Path]::GetTempPath()) ('psplib-font-
 New-Item -ItemType Directory -Force -Path $temporaryDirectory | Out-Null
 
 try {
-    $charset = (0x20..0x7E + 0x400..0x45F | ForEach-Object { '0x{0:X}' -f $_ }) -join ', '
+    # Keep the ordinary and non-breaking spaces in the same generated font set.
+    # Both are intentionally allowed to have no atlas geometry while retaining
+    # their advance metrics.
+    $charset = (0x20..0x7E + 0xA0 + 0x400..0x45F | ForEach-Object { '0x{0:X}' -f $_ }) -join ', '
     $charsetPath = Join-Path $temporaryDirectory 'charset.txt'
     $imagePath = Join-Path $temporaryDirectory 'atlas.t8'
     $jsonPath = Join-Path $temporaryDirectory 'atlas.json'
@@ -35,7 +38,10 @@ try {
     $stream = [System.IO.File]::Open($metaPath, [System.IO.FileMode]::Create)
     $writer = New-Object System.IO.BinaryWriter($stream)
     try {
-        $writer.Write([System.Text.Encoding]::ASCII.GetBytes('T8S1'))
+        # T8S2 stores the glyph quad in font-plane coordinates.  T8S1 only
+        # stored the atlas rectangle and could therefore stretch glyphs when
+        # the SDF padding differed from the real plane bounds.
+        $writer.Write([System.Text.Encoding]::ASCII.GetBytes('T8S2'))
         $writer.Write([uint32]$atlas.width)
         $writer.Write([uint32]$atlas.height)
         $writer.Write([single]$metrics.lineHeight)
@@ -45,16 +51,26 @@ try {
         foreach ($value in $lookup) { $writer.Write([uint16]$value) }
         foreach ($glyph in $glyphs) {
             $writer.Write([uint32]$glyph.unicode)
-            if ($null -eq $glyph.atlasBounds -or $null -eq $glyph.planeBounds) {
-                0..6 | ForEach-Object { $writer.Write([single]0) }
-                continue
+            if ($null -ne $glyph.atlasBounds) {
+                $writer.Write([single]($glyph.atlasBounds.left / $atlas.width))
+                $writer.Write([single]($glyph.atlasBounds.top / $atlas.height))
+                $writer.Write([single](($glyph.atlasBounds.right - $glyph.atlasBounds.left) / $atlas.width))
+                $writer.Write([single](($glyph.atlasBounds.bottom - $glyph.atlasBounds.top) / $atlas.height))
+            } else {
+                1..4 | ForEach-Object { $writer.Write([single]0) }
             }
-            $writer.Write([single]($glyph.atlasBounds.left / $atlas.width))
-            $writer.Write([single]($glyph.atlasBounds.top / $atlas.height))
-            $writer.Write([single](($glyph.atlasBounds.right - $glyph.atlasBounds.left) / $atlas.width))
-            $writer.Write([single](($glyph.atlasBounds.bottom - $glyph.atlasBounds.top) / $atlas.height))
-            $writer.Write([single]$glyph.planeBounds.left)
-            $writer.Write([single]$glyph.planeBounds.top)
+            if ($null -ne $glyph.planeBounds) {
+                # -yorigin top makes top the first plane coordinate and bottom
+                # the second.  Keep the quad in the same top-down convention
+                # used by the PSP GU vertex coordinates.
+                $writer.Write([single]$glyph.planeBounds.left)
+                $writer.Write([single]$glyph.planeBounds.top)
+                $writer.Write([single]($glyph.planeBounds.right - $glyph.planeBounds.left))
+                $writer.Write([single]($glyph.planeBounds.bottom - $glyph.planeBounds.top))
+            } else {
+                1..4 | ForEach-Object { $writer.Write([single]0) }
+            }
+            # Never discard advance when a glyph has no visible geometry.
             $writer.Write([single]$glyph.advance)
         }
     } finally {

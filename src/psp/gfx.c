@@ -238,7 +238,10 @@ void pspl_gfx_draw_t8(const void *pixels, int texture_width, int texture_height,
     if (vertices == NULL) return;
     sceGuEnable(GU_TEXTURE_2D);
     sceGuEnable(GU_ALPHA_TEST);
-    sceGuAlphaFunc(GU_GREATER, 64, 255);
+    /* The text CLUT turns the SDF edge into coverage alpha.  Discard only
+     * fully transparent texels; the previous fixed 64 threshold thickened
+     * small glyphs and produced a visible halo. */
+    sceGuAlphaFunc(GU_GREATER, 0, 255);
     sceGuClutMode(GU_PSM_8888, 0, 0xFF, 0);
     sceGuClutLoad(32, clut);
     sceGuTexMode(GU_PSM_T8, 0, 0, GU_FALSE);

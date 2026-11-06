@@ -46,6 +46,13 @@ jobs:
           cp test100.flag.example package/PSP/SAVEDATA/PSPLIBRARY/test100.flag.example
           (cd package && zip -r ../psp-library-ppsspp.zip PSP)
 
+      - name: Verify PPSSPP font resources
+        run: |
+          test -s package/PSP/GAME/PSPLIBRARY/assets/fonts/pspl_noto_sans_sdf.meta
+          test -s package/PSP/GAME/PSPLIBRARY/assets/fonts/pspl_noto_sans_sdf.t8
+          unzip -l psp-library-ppsspp.zip | grep -F 'PSP/GAME/PSPLIBRARY/assets/fonts/pspl_noto_sans_sdf.meta'
+          unzip -l psp-library-ppsspp.zip | grep -F 'PSP/GAME/PSPLIBRARY/assets/fonts/pspl_noto_sans_sdf.t8'
+
       - name: Upload EBOOT and PPSSPP package
         uses: actions/upload-artifact@v4
         with:

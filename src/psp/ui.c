@@ -64,36 +64,108 @@ static void draw_pill(float x, float y, float width, const char *label, uint32_t
     pspl_text_draw_centered(x, y + 4.0f, width, label, 1, COLOR_TEXT);
 }
 
+static float ui_text_width(const char *text, int scale)
+{
+    return (float)pspl_text_width(text, scale);
+}
+
 static void draw_header(const ui_state_t *state, int demo_mode, size_t count,
                         size_t page, size_t pages)
 {
+    const char *platform = pspl_platform_name(state->navigation.filter);
+    const char *mode = demo_mode == 2 ? "TEST 100" : demo_mode ? "DEMO" : "MY LIBRARY";
+    const float right = 472.0f;
+    const float gap = 8.0f;
+    char page_text[32];
+    float title_end;
+    float version_x;
+    float version_width;
+    float page_width;
+    float page_x;
+    float mode_width;
+    float mode_x;
+    float pill_width;
+    float pill_x;
+    float left_limit;
+
     pspl_gfx_fill_rect(0.0f, 0.0f, 480.0f, 34.0f, COLOR_PANEL);
     pspl_gfx_fill_rect(0.0f, 33.0f, 480.0f, 1.0f, COLOR_BORDER);
     pspl_text_draw(12.0f, 4.0f, "PSP LIBRARY", 2, COLOR_TEXT);
-    pspl_text_draw(170.0f, 9.0f, "V0.3.1", 1, COLOR_MUTED);
-    draw_pill(226.0f, 7.0f, 70.0f, pspl_platform_name(state->navigation.filter), COLOR_ACCENT_SOFT);
-    pspl_text_draw(305.0f, 9.0f, demo_mode == 2 ? "TEST 100" : demo_mode ? "DEMO" : "MY LIBRARY",
-                   1, COLOR_MUTED);
-    {
-        char page_text[32];
-        snprintf(page_text, sizeof(page_text), "%lu/%lu %lu GAMES",
-                 (unsigned long)page, (unsigned long)pages, (unsigned long)count);
-        pspl_text_draw(390.0f, 9.0f, page_text, 1, COLOR_TEXT);
+    title_end = 12.0f + ui_text_width("PSP LIBRARY", 2);
+    version_x = title_end + 10.0f;
+    version_width = ui_text_width("V0.3.1", 1);
+    snprintf(page_text, sizeof(page_text), "%lu/%lu %lu GAMES",
+             (unsigned long)page, (unsigned long)pages, (unsigned long)count);
+    page_width = ui_text_width(page_text, 1);
+    page_x = right - page_width;
+    mode_width = ui_text_width(mode, 1);
+    mode_x = page_x - gap - mode_width;
+    pill_width = ui_text_width(platform, 1) + 12.0f;
+    if (pill_width < 46.0f) pill_width = 46.0f;
+    if (pill_width > 76.0f) pill_width = 76.0f;
+    pill_x = mode_x - gap - pill_width;
+    left_limit = version_x + version_width + gap;
+    if (pill_x < left_limit) {
+        float available = mode_x - gap - left_limit;
+        if (available >= 44.0f) {
+            pill_x = left_limit;
+            pill_width = available;
+        }
     }
+    pspl_text_draw_clipped(version_x, 9.0f,
+                           pill_x - gap - version_x, "V0.3.1", 1, COLOR_MUTED);
+    draw_pill(pill_x, 7.0f, pill_width, platform, COLOR_ACCENT_SOFT);
+    pspl_text_draw(mode_x, 9.0f, mode, 1, COLOR_MUTED);
+    pspl_text_draw(page_x, 9.0f, page_text, 1, COLOR_TEXT);
 }
 
 static void draw_footer(const ui_state_t *state)
 {
-    const char *view = state->navigation.grid ? "GRID" : "LIST";
+    const char *full_labels[6] = {
+        "D-PAD MOVE", "X OPEN", "SELECT GRID/LIST", "START SORT", "L/R FILTER", "TRI EXIT"
+    };
+    const char *compact_labels[6] = {
+        "D-PAD", "X OPEN", "SELECT VIEW", "START SORT", "L/R FILTER", "TRI EXIT"
+    };
+    const char *minimal_labels[6] = { "D-PAD", "X", "SELECT", "START", "L/R", "TRI" };
+    const char **labels = full_labels;
+    float widths[6];
+    float total = 0.0f;
+    float gap;
+    float x = 8.0f;
+    size_t i;
+
+    (void)state;
+
     pspl_gfx_fill_rect(0.0f, 250.0f, 480.0f, 22.0f, COLOR_PANEL);
     pspl_gfx_fill_rect(0.0f, 250.0f, 480.0f, 1.0f, COLOR_BORDER);
-    pspl_text_draw(8.0f, 253.0f, "D-PAD MOVE", 1, COLOR_MUTED);
-    pspl_text_draw(90.0f, 253.0f, "X OPEN", 1, COLOR_TEXT);
-    pspl_text_draw(147.0f, 253.0f, "SELECT", 1, COLOR_ACCENT);
-    pspl_text_draw(201.0f, 253.0f, view, 1, COLOR_TEXT);
-    pspl_text_draw(246.0f, 253.0f, "START SORT", 1, COLOR_MUTED);
-    pspl_text_draw(331.0f, 253.0f, "L/R FILTER", 1, COLOR_MUTED);
-    pspl_text_draw(421.0f, 253.0f, "TRI EXIT", 1, COLOR_MUTED);
+    for (i = 0; i < 6U; ++i) {
+        widths[i] = ui_text_width(labels[i], 1);
+        total += widths[i];
+    }
+    if (total + 5.0f * 4.0f > 464.0f) {
+        labels = compact_labels;
+        total = 0.0f;
+        for (i = 0; i < 6U; ++i) {
+            widths[i] = ui_text_width(labels[i], 1);
+            total += widths[i];
+        }
+    }
+    if (total + 5.0f * 4.0f > 464.0f) {
+        labels = minimal_labels;
+        total = 0.0f;
+        for (i = 0; i < 6U; ++i) {
+            widths[i] = ui_text_width(labels[i], 1);
+            total += widths[i];
+        }
+    }
+    gap = (464.0f - total) / 5.0f;
+    if (gap < 4.0f) gap = 4.0f;
+    for (i = 0; i < 6U; ++i) {
+        pspl_text_draw(x, 253.0f, labels[i], 1,
+                       i == 1U ? COLOR_TEXT : (i == 2U ? COLOR_ACCENT : COLOR_MUTED));
+        x += widths[i] + gap;
+    }
 }
 
 static void draw_grid(const pspl_library_t *library, const ui_state_t *state,
@@ -142,15 +214,27 @@ static void draw_list(const pspl_library_t *library, const ui_state_t *state,
     for (i = page_start; i < page_end; ++i) {
         const pspl_game_t *game = &library->games[indices[i]];
         float y = 45.0f + (float)(i - page_start) * 33.0f;
+        float duration_width;
+        float duration_x;
+        float platform_width;
+        float platform_x;
+        float title_width;
         int selected = i == state->navigation.selected;
         pspl_gfx_fill_rect(8.0f, y, 464.0f, 29.0f, selected ? COLOR_SELECTED : COLOR_PANEL);
         pspl_gfx_rect(8.0f, y, 464.0f, 29.0f, selected ? COLOR_SELECTED_BORDER : COLOR_BORDER, 1.0f);
         pspl_image_draw(images, game, 14.0f, y + 3.0f, 23.0f, 23.0f);
-        pspl_text_draw_clipped(47.0f, y + 5.0f, 280.0f, game->title, 1, COLOR_TEXT);
-        pspl_text_draw(335.0f, y + 5.0f, game->platform, 1, COLOR_ACCENT);
-        pspl_text_draw(405.0f, y + 5.0f,
-                       pspl_format_duration(game->total_seconds, duration, sizeof(duration)),
-                       1, COLOR_TEXT);
+        pspl_format_duration(game->total_seconds, duration, sizeof(duration));
+        duration_width = ui_text_width(duration, 1);
+        duration_x = 464.0f - duration_width;
+        platform_width = ui_text_width(game->platform, 1);
+        platform_x = duration_x - 10.0f - platform_width;
+        if (platform_x < 320.0f) platform_x = 320.0f;
+        title_width = platform_x - 10.0f - 47.0f;
+        pspl_text_draw_clipped(47.0f, y + 5.0f, title_width, game->title, 1, COLOR_TEXT);
+        pspl_text_draw_clipped(platform_x, y + 5.0f,
+                               duration_x - 10.0f - platform_x, game->platform,
+                               1, COLOR_ACCENT);
+        pspl_text_draw(duration_x, y + 5.0f, duration, 1, COLOR_TEXT);
     }
     if (count == 0) pspl_text_draw_centered(20.0f, 112.0f, 440.0f, "NO GAMES IN THIS FILTER", 2, COLOR_TEXT);
 }
@@ -179,7 +263,7 @@ static void draw_detail(const pspl_library_t *library, const ui_state_t *state,
     format_date(game->first_started_at, first_date);
     format_date(game->last_started_at, last_date);
     pspl_text_draw(12.0f, 4.0f, "GAME DETAILS", 2, COLOR_TEXT);
-    pspl_text_draw(402.0f, 9.0f, "O BACK", 1, COLOR_ACCENT);
+    pspl_text_draw(468.0f - ui_text_width("O BACK", 1), 9.0f, "O BACK", 1, COLOR_ACCENT);
     pspl_image_draw(images, game, 14.0f, 45.0f, 110.0f, 158.0f);
     pspl_text_draw_wrapped(140.0f, 41.0f, 325.0f, game->title, 2, 2, COLOR_TEXT);
     pspl_text_draw(140.0f, 78.0f, game->platform, 1, COLOR_ACCENT);

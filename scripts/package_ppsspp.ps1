@@ -11,6 +11,12 @@ $staging = Join-Path $projectRoot ".ppsspp-staging"
 if (-not (Test-Path -LiteralPath $resolvedEboot -PathType Leaf)) {
     throw "EBOOT.PBP was not found: $resolvedEboot"
 }
+$fontMeta = Join-Path $projectRoot "assets\fonts\pspl_noto_sans_sdf.meta"
+$fontAtlas = Join-Path $projectRoot "assets\fonts\pspl_noto_sans_sdf.t8"
+if (-not (Test-Path -LiteralPath $fontMeta -PathType Leaf) -or
+    -not (Test-Path -LiteralPath $fontAtlas -PathType Leaf)) {
+    throw "Font resources are missing: $fontMeta / $fontAtlas"
+}
 
 try {
     if (Test-Path -LiteralPath $staging) {

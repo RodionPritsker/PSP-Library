@@ -711,19 +711,102 @@ static void test_visual_polish_helpers(void)
 static void test_font_atlas_assets(void)
 {
     unsigned char header[28];
+    unsigned short *lookup;
+    struct font_glyph {
+        unsigned int codepoint;
+        float u;
+        float v;
+        float width;
+        float height;
+        float plane_left;
+        float plane_top;
+        float plane_width;
+        float plane_height;
+        float advance;
+    } *glyphs;
     FILE *meta = fopen("../assets/fonts/pspl_noto_sans_sdf.meta", "rb");
     FILE *atlas = fopen("../assets/fonts/pspl_noto_sans_sdf.t8", "rb");
     long meta_size;
     long atlas_size;
+    unsigned int atlas_width;
+    unsigned int atlas_height;
+    float line_height;
+    float base_size;
+    unsigned int glyph_count;
+    size_t i;
+    const struct font_glyph *space;
+    const struct font_glyph *nbsp;
+    const struct font_glyph *question;
+
     assert(meta != NULL && atlas != NULL);
     assert(fread(header, 1, sizeof(header), meta) == sizeof(header));
-    assert(memcmp(header, "T8S1", 4) == 0);
+    assert(memcmp(header, "T8S2", 4) == 0);
+    memcpy(&atlas_width, header + 4, sizeof(atlas_width));
+    memcpy(&atlas_height, header + 8, sizeof(atlas_height));
+    memcpy(&line_height, header + 12, sizeof(line_height));
+    memcpy(&base_size, header + 20, sizeof(base_size));
+    memcpy(&glyph_count, header + 24, sizeof(glyph_count));
+    assert(atlas_width == 512U && atlas_height == 512U);
+    assert(line_height > 0.0f && base_size > 0.0f);
+    assert(glyph_count >= 192U);
+    lookup = (unsigned short *)calloc(65536U, sizeof(*lookup));
+    glyphs = (struct font_glyph *)calloc(glyph_count, sizeof(*glyphs));
+    assert(lookup != NULL && glyphs != NULL);
+    assert(fread(lookup, sizeof(*lookup), 65536U, meta) == 65536U);
+    for (i = 0; i < (size_t)glyph_count; ++i) {
+        assert(fread(&glyphs[i], sizeof(glyphs[i].codepoint), 1, meta) == 1);
+        assert(fread(&glyphs[i].u, sizeof(float), 9, meta) == 9);
+    }
     assert(fseek(meta, 0, SEEK_END) == 0);
     meta_size = ftell(meta);
-    assert(meta_size == 137212L);
+    assert(meta_size == 28L + 65536L * 2L + (long)glyph_count * 40L);
     assert(fseek(atlas, 0, SEEK_END) == 0);
     atlas_size = ftell(atlas);
     assert(atlas_size == 512L * 512L);
+    assert(lookup[32] != 0U && lookup[160] != 0U);
+    assert(lookup['?'] != 0U);
+    space = &glyphs[lookup[32] - 1U];
+    nbsp = &glyphs[lookup[160] - 1U];
+    question = &glyphs[lookup['?'] - 1U];
+    assert(space->codepoint == 32U);
+    assert(space->advance > 0.0f);
+    assert(space->width == 0.0f && space->height == 0.0f);
+    assert(space->plane_width == 0.0f && space->plane_height == 0.0f);
+    assert(nbsp->advance > 0.0f);
+    assert(question->advance > 0.0f);
+    {
+        const char *with_spaces = "Metal Gear Solid";
+        const char *without_spaces = "MetalGearSolid";
+        const char *library_with_space = "PSP LIBRARY";
+        const char *library_without_space = "PSPLIBRARY";
+        size_t width_with_spaces = 0;
+        size_t width_without_spaces = 0;
+        size_t library_width_with_space = 0;
+        size_t library_width_without_space = 0;
+        const char *samples[4] = {
+            with_spaces, without_spaces, library_with_space, library_without_space
+        };
+        size_t sample;
+        for (sample = 0; sample < 4U; ++sample) {
+            size_t position = 0;
+            while (samples[sample][position] != '\0') {
+                uint32_t codepoint;
+                unsigned short index;
+                position = pspl_utf8_next(samples[sample], position, &codepoint);
+                index = codepoint < 65536U ? lookup[codepoint] : 0U;
+                if (index == 0U) index = lookup['?'];
+                assert(index > 0U && index <= glyph_count);
+                if (sample == 0U) width_with_spaces += (size_t)(glyphs[index - 1U].advance * 12.0f + 0.5f);
+                if (sample == 1U) width_without_spaces += (size_t)(glyphs[index - 1U].advance * 12.0f + 0.5f);
+                if (sample == 2U) library_width_with_space += (size_t)(glyphs[index - 1U].advance * 12.0f + 0.5f);
+                if (sample == 3U) library_width_without_space += (size_t)(glyphs[index - 1U].advance * 12.0f + 0.5f);
+            }
+        }
+        assert(width_with_spaces > width_without_spaces);
+        assert(library_width_with_space > library_width_without_space);
+    }
+    free(glyphs);
+    free(lookup);
     fclose(meta);
     fclose(atlas);
 }
