@@ -1,0 +1,4 @@
+interface:
+  display_name: "PSP Regression"
+  short_description: "Run PSP Library regression and compatibility checks"
+  default_prompt: "Use $psp-regression to verify navigation, sessions, PSPLIB 2, PNG caching, GU safety, and Tracker API compatibility."

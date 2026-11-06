@@ -1,0 +1,4 @@
+interface:
+  display_name: "PSPDEV Build"
+  short_description: "Build and verify PSPDEV artifacts and CI"
+  default_prompt: "Use $pspdev-build to verify the PSPDEV build, EBOOT.PBP, CI logs, and PPSSPP package."

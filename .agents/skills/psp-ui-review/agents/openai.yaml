@@ -1,0 +1,4 @@
+interface:
+  display_name: "PSP UI Review"
+  short_description: "Review PSP UI layout, GU, memory, and typography"
+  default_prompt: "Use $psp-ui-review to review the 480x272 PSP UI, GU lifetimes, memory, typography, and PPSSPP behavior."
